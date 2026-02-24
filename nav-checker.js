@@ -198,43 +198,31 @@ async function checkLogin(browser) {
     console.log('OTP entered');
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Click Submit
+    // Click Submit and wait for navigation to passcode page
     console.log('Clicking OTP submit button...');
-    const submitBtn = await page.$('button.yg_submitBtn');
-    if (submitBtn) {
-      await submitBtn.click();
-      console.log('Submit button clicked');
-    } else {
-      console.log('Submit button not found!');
-    }
-    
-    console.log('Waiting for navigation after OTP submit...');
-    await new Promise(resolve => setTimeout(resolve, 8000));
+    await Promise.all([
+      page.click('button.yg_submitBtn'),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 })
+    ]);
+    console.log('Navigation completed');
 
     // Check current URL
     const currentUrl = page.url();
     console.log(`Current URL after OTP: ${currentUrl}`);
-    
-    // Take screenshot for debugging
-    await page.screenshot({ path: '/tmp/after-otp.png' });
-    console.log('Screenshot saved');
 
     // Check for error messages
-    const errorMsg = await page.$eval('.error-message', el => el.textContent).catch(() => null);
-    if (errorMsg) {
+    const errorMsg = await page.$eval('.error-message', el => el.textContent.trim()).catch(() => null);
+    if (errorMsg && errorMsg.length > 0) {
       console.log(`Error on page: ${errorMsg}`);
       throw new Error(`OTP submission failed: ${errorMsg}`);
     }
 
-    // If still on login page, check if we're on passcode page
-    if (currentUrl.includes('/passcode')) {
-      console.log('Successfully moved to passcode page!');
-    } else if (currentUrl.includes('/login')) {
-      // Check page content to see what's there
-      const pageContent = await page.content();
-      console.log('Page HTML length:', pageContent.length);
-      throw new Error('Still on login page after OTP submit. OTP might be incorrect or expired.');
+    // Verify we're on passcode page
+    if (!currentUrl.includes('/passcode')) {
+      throw new Error('Failed to reach passcode page. OTP might be incorrect or expired.');
     }
+    
+    console.log('Successfully reached passcode page!');
 
     // Enter Passcode
     await page.waitForSelector('input[type="password"]', { timeout: 10000 });
@@ -244,17 +232,41 @@ async function checkLogin(browser) {
     }
     console.log('Passcode entered');
 
-    // Click Submit
-    await page.click('button.yg_submitBtn');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Click Submit and wait for navigation to dashboard
+    await Promise.all([
+      page.click('button.yg_submitBtn'),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 })
+    ]);
+    console.log('Navigated to dashboard');
 
-    // Check if reached dashboard
-    await page.waitForSelector('.zeroBalanceText h3', { timeout: 10000 });
-    const userName = await page.$eval('.zeroBalanceText h3', el => el.textContent.trim());
-    console.log(`Login successful: ${userName}`);
-
-    await page.close();
-    return { success: true, userName };
+    // Check if reached dashboard - look for welcome message
+    const finalUrl = page.url();
+    console.log(`Final URL: ${finalUrl}`);
+    
+    // Try to find username on new dashboard
+    const userName = await page.evaluate(() => {
+      // Try new dashboard format
+      const newDash = document.querySelector('.css-nhob99');
+      if (newDash) return newDash.textContent.trim();
+      
+      // Try old dashboard format
+      const oldDash = document.querySelector('.zeroBalanceText h3');
+      if (oldDash) return oldDash.textContent.trim();
+      
+      // Try portfolio screen
+      const portfolio = document.querySelector('.css-ljufra');
+      if (portfolio) return portfolio.textContent.trim();
+      
+      return null;
+    });
+    
+    if (userName) {
+      console.log(`Login successful: ${userName}`);
+      await page.close();
+      return { success: true, userName };
+    } else {
+      throw new Error('Reached dashboard but could not find username');
+    }
 
   } catch (error) {
     console.error('Login check failed:', error);
