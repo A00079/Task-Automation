@@ -4,9 +4,9 @@
   "description": "Automated NAV checker for Motilal Oswal Mutual Fund",
   "main": "nav-checker.js",
   "scripts": {
-    "start": "node nav-checker.js",
+    "start": "node bot.js",
     "test": "node nav-checker.js",
-    "dev": "node nav-checker.js"
+    "dev": "node bot.js"
   },
   "keywords": [
     "nav",
