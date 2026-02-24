@@ -198,10 +198,30 @@ async function checkLogin(browser) {
     console.log('OTP entered');
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Click Submit and wait for navigation to passcode page
+    // Click Submit button (NOT the Resend OTP button)
     console.log('Clicking OTP submit button...');
+    const submitButtons = await page.$$('button.yg_submitBtn');
+    console.log(`Found ${submitButtons.length} submit buttons`);
+    
+    // Find the correct Submit button (not the Resend OTP one)
+    let correctButton = null;
+    for (const btn of submitButtons) {
+      const btnText = await page.evaluate(el => el.textContent.trim(), btn);
+      const btnClass = await page.evaluate(el => el.className, btn);
+      console.log(`Button: "${btnText}" - Class: "${btnClass}"`);
+      
+      if (btnText.toLowerCase().includes('submit') && !btnClass.includes('yg_resendOTPBtn')) {
+        correctButton = btn;
+        break;
+      }
+    }
+    
+    if (!correctButton) {
+      throw new Error('Could not find Submit button');
+    }
+    
     await Promise.all([
-      page.click('button.yg_submitBtn'),
+      correctButton.click(),
       page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 })
     ]);
     console.log('Navigation completed');
