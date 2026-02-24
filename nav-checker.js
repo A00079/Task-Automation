@@ -47,8 +47,8 @@ async function checkNAVWithPage(page) {
     console.log('Navigating to NAV page...');
     
     await page.goto('https://www.motilaloswalmf.com/nav/latest-nav', {
-      waitUntil: 'networkidle2',
-      timeout: 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
     });
     
     await page.waitForSelector('.table_nav tbody tr', { timeout: 10000 });
@@ -162,8 +162,8 @@ async function checkLogin(browser) {
     console.log('Navigating to login page...');
     
     await page.goto('https://www.motilaloswalmf.com/mutualfund/login', {
-      waitUntil: 'networkidle2',
-      timeout: 30000
+      waitUntil: 'domcontentloaded',
+      timeout: 60000
     });
 
     // Enter PAN
