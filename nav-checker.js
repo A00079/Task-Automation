@@ -1,5 +1,4 @@
-const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
+const puppeteer = require('puppeteer');
 const axios = require('axios');
 const { Client, GatewayIntentBits } = require('discord.js');
 require('dotenv').config();
@@ -47,8 +46,8 @@ async function checkNAVWithPage(page) {
     console.log('Navigating to NAV page...');
     
     await page.goto('https://www.motilaloswalmf.com/nav/latest-nav', {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000
+      waitUntil: 'networkidle2',
+      timeout: 30000
     });
     
     await page.waitForSelector('.table_nav tbody tr', { timeout: 10000 });
@@ -91,10 +90,13 @@ async function checkNAVUpdate() {
   try {
     console.log('Launching browser...');
     browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ]
     });
     
     const page = await browser.newPage();
@@ -162,8 +164,8 @@ async function checkLogin(browser) {
     console.log('Navigating to login page...');
     
     await page.goto('https://www.motilaloswalmf.com/mutualfund/login', {
-      waitUntil: 'domcontentloaded',
-      timeout: 60000
+      waitUntil: 'networkidle2',
+      timeout: 30000
     });
 
     // Enter PAN
@@ -243,10 +245,13 @@ async function main() {
   let browser;
   try {
     browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless
+      headless: 'new',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+      ]
     });
 
     // Check NAV
