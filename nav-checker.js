@@ -181,13 +181,16 @@ async function checkLogin(browser) {
 
     // Click Authenticate
     await page.click('button.yg_submitBtn');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    console.log('Waiting for OTP field...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     // Send Discord message for OTP
     await sendDiscordMessage('⏳ **Waiting for OTP**\n\nPlease reply with the 6-digit OTP you received.');
 
     // Wait for OTP from Discord
+    console.log('Waiting for OTP from Discord...');
     const otp = await waitForOTP();
+    console.log(`Got OTP: ${otp}, now entering it...`);
 
     // Enter OTP
     await page.waitForSelector('input[name="otp"]', { timeout: 10000 });
@@ -195,12 +198,10 @@ async function checkLogin(browser) {
     console.log('OTP entered');
 
     // Click Submit
-    await Promise.all([
-      page.click('button.yg_submitBtn'),
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {})
-    ]);
-
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log('Clicking OTP submit button...');
+    await page.click('button.yg_submitBtn');
+    console.log('Waiting for navigation after OTP submit...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     // Check current URL
     const currentUrl = page.url();
