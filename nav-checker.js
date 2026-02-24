@@ -220,26 +220,58 @@ async function checkLogin(browser) {
       throw new Error('Could not find Submit button');
     }
     
-    await Promise.all([
-      correctButton.click(),
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 })
+    console.log('Clicking the correct Submit button...');
+    await correctButton.click();
+    console.log('Waiting for navigation...');
+    
+    // Wait for either navigation or error message
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => console.log('Navigation timeout')),
+      new Promise(resolve => setTimeout(resolve, 5000))
     ]);
-    console.log('Navigation completed');
+    
+    console.log('Wait completed');
 
     // Check current URL
     const currentUrl = page.url();
     console.log(`Current URL after OTP: ${currentUrl}`);
 
-    // Check for error messages
-    const errorMsg = await page.$eval('.error-message', el => el.textContent.trim()).catch(() => null);
-    if (errorMsg && errorMsg.length > 0) {
-      console.log(`Error on page: ${errorMsg}`);
+    // Check for error messages on the page
+    const errorMsg = await page.evaluate(() => {
+      const errorDiv = document.querySelector('.error-message');
+      if (errorDiv && errorDiv.textContent.trim()) {
+        return errorDiv.textContent.trim();
+      }
+      
+      // Check for any visible error
+      const allErrors = Array.from(document.querySelectorAll('.error-message'));
+      for (const err of allErrors) {
+        const text = err.textContent.trim();
+        if (text && text !== 'Please enter OTP' && text !== 'Enter PAN number') {
+          return text;
+        }
+      }
+      return null;
+    });
+    
+    if (errorMsg) {
+      console.log(`Error message found: ${errorMsg}`);
       throw new Error(`OTP submission failed: ${errorMsg}`);
     }
 
     // Verify we're on passcode page
     if (!currentUrl.includes('/passcode')) {
-      throw new Error('Failed to reach passcode page. OTP might be incorrect or expired.');
+      // Take screenshot to see what's on the page
+      await page.screenshot({ path: '/tmp/otp-failed.png' });
+      console.log('Screenshot saved to /tmp/otp-failed.png');
+      
+      // Get page content to debug
+      const pageText = await page.evaluate(() => {
+        return document.querySelector('.yg_loginTitle')?.textContent || 'No title found';
+      });
+      console.log(`Page title: ${pageText}`);
+      
+      throw new Error(`Failed to reach passcode page. Still on: ${currentUrl}. OTP might be incorrect or expired.`);
     }
     
     console.log('Successfully reached passcode page!');
