@@ -1,8 +1,9 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const { main } = require('./nav-checker');
+require('dotenv').config();
 
-const DISCORD_BOT_TOKEN = 'MTQ3NTc2MTY3OTU1NDg0MjY2NQ.GgmVrb.GEJGKGTL2QCWwK5SzbGQS_Ou3_9D8CQubSpw1A';
-const DISCORD_CHANNEL_ID = '1475754439553056893';
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]

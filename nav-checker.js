@@ -1,15 +1,16 @@
 const puppeteer = require('puppeteer');
 const axios = require('axios');
 const { Client, GatewayIntentBits } = require('discord.js');
+require('dotenv').config();
 
 // Discord Configuration
-const DISCORD_BOT_TOKEN = 'MTQ3NTc2MTY3OTU1NDg0MjY2NQ.GgmVrb.GEJGKGTL2QCWwK5SzbGQS_Ou3_9D8CQubSpw1A';
-const DISCORD_CHANNEL_ID = '1475754439553056893';
-const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1475755457896255591/JaF1KPPup5vVKuQ-9JXMrTFZF0xyqlyvO-XZjnPjZOokNt3omRe_mTU-bFo9SPjVAIyN';
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
 // Login Configuration
-const PAN_NUMBER = 'ERNPB0636M';
-const PASSCODE = '0097';
+const PAN_NUMBER = process.env.PAN_NUMBER;
+const PASSCODE = process.env.PASSCODE;
 
 // Function to get expected NAV date (yesterday or Friday if today is Monday)
 function getExpectedNAVDate() {
