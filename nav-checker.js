@@ -291,12 +291,17 @@ async function checkLogin(browser) {
     }
     console.log('Passcode entered');
 
-    // Click Submit and wait for navigation to dashboard
-    await Promise.all([
-      page.click('button.yg_submitBtn'),
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 })
+    // Click Submit
+    console.log('Clicking passcode submit button...');
+    await page.click('button.yg_submitBtn');
+    console.log('Waiting for dashboard...');
+    
+    // Wait for navigation with longer timeout
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => console.log('Navigation timeout')),
+      new Promise(resolve => setTimeout(resolve, 10000))
     ]);
-    console.log('Navigated to dashboard');
+    console.log('Wait completed');
 
     // Check if reached dashboard - look for welcome message
     const finalUrl = page.url();
