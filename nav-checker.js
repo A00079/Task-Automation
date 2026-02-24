@@ -133,10 +133,15 @@ async function sendDiscordMessage(message) {
 
 // Function to wait for OTP from Discord
 async function waitForOTP() {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const client = new Client({
       intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
     });
+
+    const timeout = setTimeout(async () => {
+      await client.destroy();
+      reject(new Error('OTP timeout - no response received within 2 minutes'));
+    }, 120000); // 2 minutes
 
     client.once('ready', () => {
       console.log('Discord bot connected, waiting for OTP...');
@@ -147,6 +152,7 @@ async function waitForOTP() {
         const otp = msg.content.trim();
         if (/^\d{6}$/.test(otp)) {
           console.log(`OTP received: ${otp}`);
+          clearTimeout(timeout);
           await client.destroy();
           resolve(otp);
         }
