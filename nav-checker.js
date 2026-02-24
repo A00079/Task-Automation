@@ -167,6 +167,13 @@ async function waitForOTP() {
 async function checkLogin(browser) {
   try {
     const page = await browser.newPage();
+    
+    // Make Puppeteer undetectable
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.navigator.chrome = { runtime: {} };
+    });
+    
     console.log('Navigating to login page...');
     
     await page.goto('https://www.motilaloswalmf.com/mutualfund/login', {
@@ -332,18 +339,27 @@ async function main() {
   
   let browser;
   try {
+    console.log('Launching browser...');
     browser = await puppeteer.launch({
       headless: 'new',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--disable-gpu'
+        '--disable-gpu',
+        '--disable-blink-features=AutomationControlled'
       ]
     });
 
     // Check NAV
     const page = await browser.newPage();
+    
+    // Make Puppeteer undetectable
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.navigator.chrome = { runtime: {} };
+    });
+    
     const navResult = await checkNAVWithPage(page);
     await page.close();
     
