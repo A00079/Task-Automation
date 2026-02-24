@@ -14,8 +14,12 @@ const PASSCODE = process.env.PASSCODE;
 
 // Function to get expected NAV date (yesterday or Friday if today is Monday)
 function getExpectedNAVDate() {
-  const today = new Date();
-  const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
+  // Get current date in IST (UTC+5:30)
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000; // IST is UTC+5:30
+  const istTime = new Date(now.getTime() + istOffset);
+  
+  const dayOfWeek = istTime.getUTCDay(); // 0 = Sunday, 1 = Monday, etc.
   
   let daysToSubtract = 1;
   if (dayOfWeek === 1) { // Monday
@@ -24,18 +28,20 @@ function getExpectedNAVDate() {
     daysToSubtract = 2; // Go back to Friday
   }
   
-  const expectedDate = new Date(today);
-  expectedDate.setDate(today.getDate() - daysToSubtract);
+  const expectedDate = new Date(istTime);
+  expectedDate.setUTCDate(istTime.getUTCDate() - daysToSubtract);
+  
+  console.log(`IST Date: ${istTime.toISOString()}, Day: ${dayOfWeek}`);
   
   return expectedDate;
 }
 
 // Function to format date as DD-MMM-YYYY (e.g., 23-Feb-2026)
 function formatDate(date) {
-  const day = String(date.getDate()).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const month = months[date.getMonth()];
-  const year = date.getFullYear();
+  const month = months[date.getUTCMonth()];
+  const year = date.getUTCFullYear();
   
   return `${day}-${month}-${year}`;
 }
