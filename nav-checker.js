@@ -334,12 +334,15 @@ async function checkLogin(browser) {
     if (finalUrl.includes('/sso')) {
       console.log('On SSO page, waiting for final redirect...');
       await Promise.race([
-        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => console.log('SSO redirect timeout')),
-        new Promise(resolve => setTimeout(resolve, 8000))
+        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }).catch(() => console.log('SSO redirect timeout')),
+        new Promise(resolve => setTimeout(resolve, 15000))
       ]);
       finalUrl = page.url();
       console.log(`Final URL after SSO: ${finalUrl}`);
     }
+
+    // Wait for page to fully load
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     // Check if reached dashboard - look for welcome message
     console.log('Looking for username on dashboard...');
