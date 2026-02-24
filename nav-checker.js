@@ -288,18 +288,42 @@ async function checkLogin(browser) {
     const passcodeInputs = await page.$$('input[type="password"]');
     for (let i = 0; i < PASSCODE.length; i++) {
       await passcodeInputs[i].type(PASSCODE[i]);
+      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between digits
     }
     console.log('Passcode entered');
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Click Submit
+    // Toggle "Discover the New Experience" switch to ON
+    console.log('Checking toggle switch...');
+    const toggleSwitch = await page.$('input.MuiSwitch-input[type="checkbox"]');
+    if (toggleSwitch) {
+      const isChecked = await page.evaluate(el => el.checked, toggleSwitch);
+      console.log(`Toggle is currently: ${isChecked ? 'ON' : 'OFF'}`);
+      
+      if (!isChecked) {
+        console.log('Turning toggle ON...');
+        await toggleSwitch.click();
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    } else {
+      console.log('Toggle switch not found');
+    }
+
+    // Click Submit button on passcode page
     console.log('Clicking passcode submit button...');
-    await page.click('button.yg_submitBtn');
-    console.log('Waiting for dashboard...');
+    const passcodeSubmitBtn = await page.$('button.btnsubmit');
+    if (!passcodeSubmitBtn) {
+      console.log('btnsubmit not found, trying yg_submitBtn');
+      await page.click('button.yg_submitBtn');
+    } else {
+      await passcodeSubmitBtn.click();
+    }
+    console.log('Submit button clicked, waiting for dashboard...');
     
-    // Wait for navigation with longer timeout
+    // Wait for navigation to dashboard (different domain)
     await Promise.race([
       page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => console.log('Navigation timeout')),
-      new Promise(resolve => setTimeout(resolve, 10000))
+      new Promise(resolve => setTimeout(resolve, 12000))
     ]);
     console.log('Wait completed');
 
