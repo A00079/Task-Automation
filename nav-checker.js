@@ -429,12 +429,10 @@ async function main() {
     }
     
     if (loginResult.success) {
-      message += `2. Login working properly (${loginResult.userName})\n`;
+      message += `2. Login working properly (${loginResult.userName})`;
     } else {
-      message += `2. Login failed: ${loginResult.error}\n`;
+      message += `2. Login failed: ${loginResult.error}`;
     }
-    
-    message += '\nhttps://www.motilaloswalmf.com/nav/latest-nav';
     
     await sendDiscordMessage(message);
     console.log('Check completed.');
