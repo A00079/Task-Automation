@@ -1,9 +1,17 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const { main } = require('./nav-checker');
+const express = require('express');
 require('dotenv').config();
 
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+
+// Create HTTP server for Render
+const app = express();
+app.get('/', (req, res) => res.send('Bot is running!'));
+app.listen(process.env.PORT || 3000, () => {
+  console.log('HTTP server running on port', process.env.PORT || 3000);
+});
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
