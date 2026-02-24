@@ -196,16 +196,28 @@ async function checkLogin(browser) {
     await page.waitForSelector('input[name="otp"]', { timeout: 10000 });
     await page.type('input[name="otp"]', otp);
     console.log('OTP entered');
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Click Submit
     console.log('Clicking OTP submit button...');
-    await page.click('button.yg_submitBtn');
+    const submitBtn = await page.$('button.yg_submitBtn');
+    if (submitBtn) {
+      await submitBtn.click();
+      console.log('Submit button clicked');
+    } else {
+      console.log('Submit button not found!');
+    }
+    
     console.log('Waiting for navigation after OTP submit...');
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await new Promise(resolve => setTimeout(resolve, 8000));
 
     // Check current URL
     const currentUrl = page.url();
-    console.log(`Current URL: ${currentUrl}`);
+    console.log(`Current URL after OTP: ${currentUrl}`);
+    
+    // Take screenshot for debugging
+    await page.screenshot({ path: '/tmp/after-otp.png' });
+    console.log('Screenshot saved');
 
     // Check for error messages
     const errorMsg = await page.$eval('.error-message', el => el.textContent).catch(() => null);
@@ -214,8 +226,13 @@ async function checkLogin(browser) {
       throw new Error(`OTP submission failed: ${errorMsg}`);
     }
 
-    // If still on login page, OTP might be wrong
-    if (currentUrl.includes('/login') && !currentUrl.includes('/passcode')) {
+    // If still on login page, check if we're on passcode page
+    if (currentUrl.includes('/passcode')) {
+      console.log('Successfully moved to passcode page!');
+    } else if (currentUrl.includes('/login')) {
+      // Check page content to see what's there
+      const pageContent = await page.content();
+      console.log('Page HTML length:', pageContent.length);
       throw new Error('Still on login page after OTP submit. OTP might be incorrect or expired.');
     }
 
