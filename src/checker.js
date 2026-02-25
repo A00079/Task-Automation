@@ -730,12 +730,12 @@ async function main(discordClient) {
     
     // Add timestamp
     const now = new Date();
-    const istTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
-    const timeStr = istTime.toLocaleString('en-IN', { 
+    const timeStr = now.toLocaleString('en-GB', { 
       timeZone: 'Asia/Kolkata',
       hour: '2-digit', 
       minute: '2-digit',
-      day: '2-digit',
+      hour12: true,
+      day: 'numeric',
       month: 'short',
       year: 'numeric'
     });
