@@ -386,6 +386,174 @@ async function setReactValue(page, selector, value) {
   }, selector, value);
 }
 
+// Function to check Account Performance Report
+async function checkAccountPerformance(browser) {
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+    
+    console.log('Navigating to Account Performance page...');
+    await page.goto('https://pms.motilaloswalmf.com/v2/pms/reports/accountPerformance', {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+
+    // Wait for page to load
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Click on Select PMS Code field
+    console.log('Clicking Select PMS Code field...');
+    await page.waitForSelector('div[aria-labelledby="pmsId"]', { timeout: 10000 });
+    await page.click('div[aria-labelledby="pmsId"]');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // Wait for popup and select first option (PMVP15293)
+    console.log('Waiting for PMS Code popup...');
+    await page.waitForSelector('li[id="PMVP15293"]', { timeout: 10000 });
+    
+    // Click the list item to select it
+    await page.click('li[id="PMVP15293"]');
+    console.log('Clicked PMS Code: PMVP15293');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // Verify selection by checking if checkbox is checked
+    const isSelected = await page.evaluate(() => {
+      const li = document.querySelector('li[id="PMVP15293"]');
+      if (li) {
+        const checkbox = li.querySelector('input[type="checkbox"]');
+        return checkbox ? checkbox.checked : false;
+      }
+      return false;
+    });
+    
+    console.log('PMS Code checkbox checked:', isSelected);
+
+    if (!isSelected) {
+      console.log('First click failed, trying direct checkbox click...');
+      await page.evaluate(() => {
+        const li = document.querySelector('li[id="PMVP15293"]');
+        if (li) {
+          const checkbox = li.querySelector('input[type="checkbox"]');
+          if (checkbox) checkbox.click();
+        }
+      });
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // Close the popup by clicking outside
+    await page.keyboard.press('Escape');
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Click View button
+    console.log('Clicking View button...');
+    await page.waitForSelector('button[type="submit"]', { timeout: 10000 });
+    await page.click('button[type="submit"]');
+    console.log('View button clicked, checking for validation errors...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Check for validation errors
+    const validationError = await page.evaluate(() => {
+      const errorElements = document.querySelectorAll('.Mui-error, [role="alert"], .MuiFormHelperText-root');
+      for (const el of errorElements) {
+        const text = el.textContent.trim();
+        if (text.includes('At least one PMS Code is required') || text.includes('required')) {
+          return text;
+        }
+      }
+      return null;
+    });
+
+    if (validationError) {
+      throw new Error(`Validation error: ${validationError}`);
+    }
+
+    console.log('No validation errors, waiting for data to load...');
+    await new Promise(resolve => setTimeout(resolve, 8000));
+
+    // Wait for Download PDF button to appear
+    console.log('Waiting for Download PDF button...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Click Download PDF button and wait for new tab
+    console.log('Looking for Download PDF button...');
+    
+    // Set up listener for new page/tab
+    const newPagePromise = new Promise(resolve => {
+      browser.once('targetcreated', async target => {
+        const newPage = await target.page();
+        resolve(newPage);
+      });
+    });
+
+    const downloadClicked = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      for (const btn of buttons) {
+        if (btn.textContent.includes('Download PDF')) {
+          btn.click();
+          return true;
+        }
+      }
+      return false;
+    });
+
+    if (!downloadClicked) {
+      throw new Error('Download PDF button not found');
+    }
+
+    console.log('Download PDF button clicked, waiting for PDF to open...');
+
+    // Wait for new tab with PDF
+    const pdfPage = await Promise.race([
+      newPagePromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('PDF tab did not open within 15 seconds')), 15000))
+    ]);
+
+    // Wait for navigation to PDF URL (it takes time to generate)
+    console.log('New tab opened, waiting for PDF URL...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    let pdfUrl = pdfPage.url();
+    console.log('Current URL:', pdfUrl);
+    
+    // If not PDF yet, wait for navigation
+    if (!pdfUrl.includes('.pdf')) {
+      console.log('Waiting for navigation to PDF...');
+      await pdfPage.waitForNavigation({ timeout: 10000 }).catch(() => {});
+      pdfUrl = pdfPage.url();
+      console.log('PDF URL after navigation:', pdfUrl);
+    }
+
+    // Verify it's a PDF URL
+    if (!pdfUrl.includes('.pdf')) {
+      throw new Error('Opened page is not a PDF');
+    }
+
+    // Check if PDF is accessible (status 200)
+    const axios = require('axios');
+    try {
+      const response = await axios.head(pdfUrl, { timeout: 5000 });
+      if (response.status === 200) {
+        console.log('PDF is accessible and generated successfully');
+        await pdfPage.close();
+        await page.close();
+        return { 
+          success: true, 
+          message: 'Account Performance report generated successfully',
+          pdfUrl: pdfUrl
+        };
+      } else {
+        throw new Error(`PDF returned status ${response.status}`);
+      }
+    } catch (error) {
+      throw new Error(`PDF accessibility check failed: ${error.message}`);
+    }
+
+  } catch (error) {
+    console.error('Account Performance check failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Function to check PMS dashboard
 async function checkPMSDashboard(browser) {
   try {
@@ -696,6 +864,14 @@ async function main(discordClient) {
     // Check PMS Dashboard
     const pmsResult = await checkPMSDashboard(browser);
     
+    // Check Account Performance Report
+    let accountPerfResult;
+    if (pmsResult.success) {
+      accountPerfResult = await checkAccountPerformance(browser);
+    } else {
+      accountPerfResult = { success: false, error: 'Skipped due to PMS Dashboard failure' };
+    }
+    
     // Build message with proper formatting and username
     let message = '**Good Morning team,**\n\n**Website Update Report**\n\n';
     
@@ -726,6 +902,13 @@ async function main(discordClient) {
       }
     } else {
       message += `❌ **PMS Dashboard:** Failed\n   └ Error: ${pmsResult.error}\n`;
+    }
+    
+    // Account Performance Report Status
+    if (accountPerfResult.success) {
+      message += `✅ **Account Performance Report:** Working fine\n`;
+    } else {
+      message += `❌ **Account Performance Report:** Failed\n   └ Error: ${accountPerfResult.error}\n`;
     }
     
     // Add timestamp
