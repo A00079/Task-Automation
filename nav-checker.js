@@ -12,6 +12,11 @@ const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const PAN_NUMBER = process.env.PAN_NUMBER;
 const PASSCODE = process.env.PASSCODE;
 
+// PMS Admin Configuration
+const PMS_USERNAME = '16340';
+const PMS_PASSWORD = 'Mosl@2026';
+const PMS_PAN = 'AINPB3346D';
+
 // Function to get expected NAV date (yesterday or Friday if today is Monday)
 function getExpectedNAVDate() {
   // Get current date in IST (UTC+5:30)
@@ -384,6 +389,80 @@ async function checkLogin(browser) {
   }
 }
 
+// Function to check PMS dashboard
+async function checkPMSDashboard(browser) {
+  try {
+    const page = await browser.newPage();
+    
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.navigator.chrome = { runtime: {} };
+    });
+    
+    console.log('Navigating to PMS admin login...');
+    await page.goto('https://www.motilaloswalmf.com/adminlogin/', {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+
+    await page.waitForSelector('input[name="username"]', { timeout: 10000 });
+    await page.type('input[name="username"]', PMS_USERNAME);
+    console.log('PMS Username entered');
+
+    await page.waitForSelector('input[name="password"]', { timeout: 10000 });
+    await page.type('input[name="password"]', PMS_PASSWORD);
+    console.log('PMS Password entered');
+
+    await Promise.all([
+      page.click('button.login_button'),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 })
+    ]);
+    console.log('Navigated to dashboard page');
+
+    await page.waitForSelector('select[name="name"]', { timeout: 10000 });
+    await page.select('select[name="name"]', 'PMS');
+    console.log('PMS selected from dropdown');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    await page.waitForSelector('input[name="panNo"]', { timeout: 10000 });
+    await page.type('input[name="panNo"]', PMS_PAN);
+    console.log('PAN entered');
+
+    await Promise.all([
+      page.click('button.login_button'),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 })
+    ]);
+    console.log('Navigated to PMS dashboard');
+
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    const finalUrl = page.url();
+    console.log(`PMS Dashboard URL: ${finalUrl}`);
+
+    const welcomeMsg = await page.evaluate(() => {
+      const welcome = document.querySelector('.css-35ezg3');
+      if (welcome) return welcome.textContent.trim();
+      
+      const altWelcome = document.querySelector('.css-t7gog');
+      if (altWelcome) return altWelcome.textContent.trim();
+      
+      return null;
+    });
+
+    if (welcomeMsg) {
+      console.log(`PMS Dashboard loaded: ${welcomeMsg}`);
+      await page.close();
+      return { success: true, message: welcomeMsg };
+    } else {
+      throw new Error('PMS dashboard loaded but could not find welcome message');
+    }
+
+  } catch (error) {
+    console.error('PMS dashboard check failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 // Main execution
 async function main() {
   console.log('Starting NAV and Login check...');
@@ -417,6 +496,9 @@ async function main() {
     // Check Login
     const loginResult = await checkLogin(browser);
     
+    // Check PMS Dashboard
+    const pmsResult = await checkPMSDashboard(browser);
+    
     // Build message
     let message = 'Good Morning team,\n\nWebsite update\n\n';
     
@@ -429,9 +511,15 @@ async function main() {
     }
     
     if (loginResult.success) {
-      message += `2. Login working properly (${loginResult.userName})`;
+      message += `2. Login working properly (${loginResult.userName})\n`;
     } else {
-      message += `2. Login failed: ${loginResult.error}`;
+      message += `2. Login failed: ${loginResult.error}\n`;
+    }
+    
+    if (pmsResult.success) {
+      message += '3. PMS dashboard data is loading properly.';
+    } else {
+      message += `3. PMS dashboard failed: ${pmsResult.error}`;
     }
     
     await sendDiscordMessage(message);
