@@ -2,11 +2,9 @@
   "name": "nav-checker-automation",
   "version": "1.0.0",
   "description": "Automated NAV checker for Motilal Oswal Mutual Fund",
-  "main": "nav-checker.js",
+  "main": "src/index.js",
   "scripts": {
-    "start": "node bot.js",
-    "test": "node nav-checker.js",
-    "dev": "node bot.js"
+    "start": "node src/index.js"
   },
   "keywords": [
     "nav",

@@ -1,50 +1,29 @@
-# NAV Checker Automation
+# Website Checker Bot
 
-Automated script to check Motilal Oswal Mutual Fund NAV daily and send Discord notifications.
+Automated bot to check Motilal Oswal website status daily.
 
-## Setup Discord (2 minutes)
+## Setup
 
-1. **Create Discord Webhook:**
-   - Right-click your Discord channel
-   - Edit Channel → Integrations → Webhooks
-   - Create Webhook → Copy Webhook URL
+1. Install dependencies:
+```bash
+npm install
+```
 
-2. **Update nav-checker.js:**
-   - Open `nav-checker.js`
-   - Line 101: Replace `YOUR_DISCORD_WEBHOOK_URL` with your webhook URL
+2. Configure `.env` file with your credentials
 
-3. **Test Locally:**
-   ```bash
-   npm install
-   node nav-checker.js
-   ```
+3. Run the bot:
+```bash
+npm start
+```
 
-## Deploy to Render
+4. In Discord, type: `Jarvis wake up`
 
-1. **Push to GitHub:**
-   ```bash
-   git init
-   git add .
-   git commit -m "NAV checker with Discord"
-   git remote add origin YOUR_REPO_URL
-   git push -u origin main
-   ```
+## What it checks
 
-2. **Create Cron Job:**
-   - Go to: https://dashboard.render.com/cron/new
-   - Connect GitHub repository
-   - Build Command: `npm install`
-   - Start Command: `node nav-checker.js`
-   - Schedule: `30 1 * * *` (7 AM IST)
-   - Create Cron Job
+1. NAV updated properly
+2. Login working properly
+3. PMS dashboard data loading properly
 
-## How It Works
+## Deployment
 
-- Runs daily at 7 AM IST
-- Checks if NAV date is updated (yesterday's date, or Friday if Monday)
-- Sends Discord message with status
-- Completely FREE
-
-## Cost
-
-**FREE** - Render free tier + Discord webhooks
+Deploy to Render as a cron job that runs daily at 7 AM IST.
