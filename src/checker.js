@@ -21,7 +21,9 @@ const PMS_PASSWORD = 'Mosl@2026';
 const PMS_PAN = 'AINPB3346D';
 
 // Feature Flags
-const SKIP_LOGIN_CHECK = true; // Set to false to enable login check
+const SKIP_LOGIN_CHECK = false; // Set to false to enable login check
+const SKIP_PMS_DASHBOARD_CHECK = false; // Set to false to enable PMS dashboard check
+const SKIP_MF_ACCOUNT_STATEMENT_CHECK = false; // Set to false to enable MF account statement check
 
 // Function to get expected NAV date (yesterday or Friday if today is Monday)
 function getExpectedNAVDate() {
@@ -238,14 +240,25 @@ async function checkLogin(browser, discordClient) {
     }
     
     console.log('Clicking the correct Submit button...');
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }),
-      correctButton.click()
-    ]);
-    console.log('Navigation completed');
+    await correctButton.click();
     
-    const currentUrl = page.url();
-    console.log(`Current URL after OTP: ${currentUrl}`);
+    // Wait for navigation with longer timeout
+    console.log('Waiting for navigation to passcode page...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // Check current URL
+    let currentUrl = page.url();
+    console.log(`Current URL after submit: ${currentUrl}`);
+    
+    // If still on login page, wait a bit more for navigation
+    if (currentUrl.includes('/login') && !currentUrl.includes('/passcode')) {
+      console.log('Still on login page, waiting for navigation...');
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {
+        console.log('Navigation wait timed out');
+      });
+      currentUrl = page.url();
+      console.log(`URL after wait: ${currentUrl}`);
+    }
 
     if (!currentUrl.includes('/passcode')) {
       const errorMsg = await page.evaluate(() => {
@@ -337,17 +350,24 @@ async function checkLogin(browser, discordClient) {
     // Check if reached dashboard - look for welcome message
     console.log('Looking for username on dashboard...');
     
-    // Try to find username on new dashboard
+    // Try to find username on dashboard with investments
     const userName = await page.evaluate(() => {
-      // Try new dashboard format
+      // Try new dashboard with investments - Welcome, USER NAME format
+      const welcomeText = document.querySelector('p.MuiTypography-root.css-ljufra');
+      if (welcomeText) {
+        const nameSpan = welcomeText.querySelector('span.MuiBox-root.css-y13svj');
+        if (nameSpan) {
+          return nameSpan.textContent.trim();
+        }
+      }
+      
+      // Fallback: Try old dashboard format
       const newDash = document.querySelector('.css-nhob99');
       if (newDash) return newDash.textContent.trim();
       
-      // Try old dashboard format
       const oldDash = document.querySelector('.zeroBalanceText h3');
       if (oldDash) return oldDash.textContent.trim();
       
-      // Try portfolio screen
       const portfolio = document.querySelector('.css-ljufra');
       if (portfolio) return portfolio.textContent.trim();
       
@@ -384,6 +404,89 @@ async function setReactValue(page, selector, value) {
     el.dispatchEvent(new Event('input',  { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }, selector, value);
+}
+
+// Function to check MF Account Statement
+async function checkMFAccountStatement(browser) {
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+    
+    console.log('Navigating to SIP Report page...');
+    await page.goto('https://invest.motilaloswalmf.com/reports/sip-report', {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+
+    // Wait for page to load
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Set up listener for new page/tab
+    const newPagePromise = new Promise(resolve => {
+      browser.once('targetcreated', async target => {
+        const newPage = await target.page();
+        resolve(newPage);
+      });
+    });
+
+    // Click Download Report button
+    console.log('Looking for Download Report button...');
+    const downloadClicked = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      for (const btn of buttons) {
+        if (btn.textContent.includes('Download Report')) {
+          btn.click();
+          return true;
+        }
+      }
+      return false;
+    });
+
+    if (!downloadClicked) {
+      throw new Error('Download Report button not found');
+    }
+
+    console.log('Download Report button clicked, waiting for report to open...');
+
+    // Wait for new tab with report
+    const reportPage = await Promise.race([
+      newPagePromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Report tab did not open within 15 seconds')), 15000))
+    ]);
+
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    const reportUrl = reportPage.url();
+    console.log('Report opened in new tab:', reportUrl);
+
+    // Verify it's a PDF or report URL
+    if (!reportUrl.includes('.pdf') && !reportUrl.includes('report')) {
+      throw new Error('Opened page is not a report');
+    }
+
+    // Check if report is accessible
+    const axios = require('axios');
+    try {
+      const response = await axios.head(reportUrl, { timeout: 5000 });
+      if (response.status === 200) {
+        console.log('MF Account Statement report generated successfully');
+        await reportPage.close();
+        await page.close();
+        return { 
+          success: true, 
+          message: 'MF Account Statement report generated successfully',
+          reportUrl: reportUrl
+        };
+      } else {
+        throw new Error(`Report returned status ${response.status}`);
+      }
+    } catch (error) {
+      throw new Error(`Report accessibility check failed: ${error.message}`);
+    }
+
+  } catch (error) {
+    console.error('MF Account Statement check failed:', error);
+    return { success: false, error: error.message };
+  }
 }
 
 // Function to check Account Performance Report
@@ -861,54 +964,104 @@ async function main(discordClient) {
       loginResult = await checkLogin(browser, discordClient);
     }
     
+    // Check MF Account Statement (runs after login, before logout)
+    let mfAccountStatementResult;
+    if (SKIP_MF_ACCOUNT_STATEMENT_CHECK) {
+      console.log('Skipping MF Account Statement check (SKIP_MF_ACCOUNT_STATEMENT_CHECK = true)...');
+      mfAccountStatementResult = { success: true, skipped: true };
+    } else if (loginResult.success && !loginResult.skipped) {
+      mfAccountStatementResult = await checkMFAccountStatement(browser);
+    } else {
+      mfAccountStatementResult = { success: false, error: 'Skipped due to login check being disabled or failed' };
+    }
+    
+    // Logout after MF checks (clear cookies)
+    if (loginResult.success && !loginResult.skipped) {
+      console.log('Clearing cookies to logout from MF dashboard...');
+      try {
+        const pages = await browser.pages();
+        if (pages.length > 0) {
+          const client = await pages[0].target().createCDPSession();
+          await client.send('Network.clearBrowserCookies');
+          console.log('Cookies cleared - logged out successfully');
+        }
+      } catch (e) {
+        console.log('Cookie clearing failed:', e.message);
+      }
+    }
+    
     // Check PMS Dashboard
-    const pmsResult = await checkPMSDashboard(browser);
+    let pmsResult;
+    if (SKIP_PMS_DASHBOARD_CHECK) {
+      console.log('Skipping PMS dashboard check (SKIP_PMS_DASHBOARD_CHECK = true)...');
+      pmsResult = { success: true, userName: 'Skipped', skipped: true };
+    } else {
+      pmsResult = await checkPMSDashboard(browser);
+    }
     
     // Check Account Performance Report
     let accountPerfResult;
-    if (pmsResult.success) {
+    if (pmsResult.success && !pmsResult.skipped) {
       accountPerfResult = await checkAccountPerformance(browser);
     } else {
-      accountPerfResult = { success: false, error: 'Skipped due to PMS Dashboard failure' };
+      accountPerfResult = { success: false, error: 'Skipped due to PMS Dashboard check being disabled or failed' };
     }
     
-    // Build message with proper formatting and username
-    let message = '**Good Morning team,**\n\n**Website Update Report**\n\n';
+    // Build message with proper formatting
+    let message = '**Good Morning Team,**\n\n**Website update**\n\n';
     
-    // NAV Status
+    // 1. NAV Status
     if (navResult.success && navResult.isUpdated) {
-      message += '✅ **NAV:** Updated properly\n';
+      message += '1. NAV updated properly\n';
     } else if (navResult.success && !navResult.isUpdated) {
-      message += `❌ **NAV:** NOT updated\n   └ Expected: ${navResult.expectedDate}, Actual: ${navResult.actualDate}\n`;
+      message += `1. NAV NOT updated (Expected: ${navResult.expectedDate}, Actual: ${navResult.actualDate})\n`;
     } else {
-      message += `❌ **NAV:** Check failed\n   └ Error: ${navResult.error}\n`;
+      message += `1. NAV check failed (Error: ${navResult.error})\n`;
     }
     
-    // Login Status
+    // 2. Login Status
     if (loginResult.success && !loginResult.skipped) {
-      message += `✅ **Login:** Working properly\n   └ User: ${loginResult.userName}\n`;
+      message += `2. Login working properly\n`;
     } else if (loginResult.skipped) {
-      message += `⏭️ **Login:** Check skipped\n`;
+      message += `2. Login check skipped\n`;
     } else {
-      message += `❌ **Login:** Failed\n   └ Error: ${loginResult.error}\n`;
+      message += `2. Login failed (Error: ${loginResult.error})\n`;
     }
     
-    // PMS Dashboard Status - WITH USERNAME
-    if (pmsResult.success) {
-      if (pmsResult.userName && pmsResult.userName !== 'Unknown') {
-        message += `✅ **PMS Dashboard:** Data loading properly\n   └ Logged in as: **${pmsResult.userName}**\n`;
-      } else {
-        message += `✅ **PMS Dashboard:** Data loading properly\n`;
-      }
+    // 3. MF Dashboard Status (based on login success and username extraction)
+    if (loginResult.success && !loginResult.skipped && loginResult.userName) {
+      message += `3. MF dashboard is loading properly\n`;
+      console.log(`✅ MF Dashboard - User: ${loginResult.userName}`);
+    } else if (loginResult.skipped) {
+      message += `3. MF dashboard check skipped\n`;
     } else {
-      message += `❌ **PMS Dashboard:** Failed\n   └ Error: ${pmsResult.error}\n`;
+      message += `3. MF dashboard failed to load\n`;
     }
     
-    // Account Performance Report Status
+    // 4. MF Account Statement Status
+    if (mfAccountStatementResult.success && !mfAccountStatementResult.skipped) {
+      message += `4. Account statement report for MF working properly\n`;
+    } else if (mfAccountStatementResult.skipped) {
+      message += `4. Account statement report for MF check skipped\n`;
+    } else {
+      message += `4. Account statement report for MF failed\n`;
+    }
+    
+    // 5. PMS Dashboard Status (based on username extraction)
+    if (pmsResult.success && !pmsResult.skipped && pmsResult.userName && pmsResult.userName !== 'Unknown') {
+      message += `5. PMS dashboard data is loading properly\n`;
+      console.log(`✅ PMS Dashboard - User: ${pmsResult.userName}`);
+    } else if (pmsResult.skipped) {
+      message += `5. PMS dashboard check skipped\n`;
+    } else {
+      message += `5. PMS dashboard data failed to load\n`;
+    }
+    
+    // 6. Account Performance Report Status
     if (accountPerfResult.success) {
-      message += `✅ **Account Performance Report:** Working fine\n`;
+      message += `6. Account performance report for PMS is working fine\n`;
     } else {
-      message += `❌ **Account Performance Report:** Failed\n   └ Error: ${accountPerfResult.error}\n`;
+      message += `6. Account performance report for PMS failed\n`;
     }
     
     // Add timestamp
@@ -922,7 +1075,7 @@ async function main(discordClient) {
       month: 'short',
       year: 'numeric'
     });
-    message += `\n📅 **Report generated:** ${timeStr} IST`;
+    message += `\n_Report generated: ${timeStr} IST_`;
     
     await sendDiscordMessage(message);
     console.log('Check completed.');
