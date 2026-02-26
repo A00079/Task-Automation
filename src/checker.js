@@ -176,7 +176,7 @@ async function waitForOTP(existingClient) {
 }
 
 // Function to check login
-async function checkLogin(browser, discordClient) {
+async function checkLogin(browser, discordClient, panNumber, passcode) {
   try {
     const page = await browser.newPage();
     
@@ -195,7 +195,7 @@ async function checkLogin(browser, discordClient) {
 
     // Enter PAN
     await page.waitForSelector('input[name="panNo"]', { timeout: 10000 });
-    await page.type('input[name="panNo"]', PAN_NUMBER);
+    await page.type('input[name="panNo"]', panNumber);
     console.log('PAN entered');
 
     // Click Authenticate
@@ -289,8 +289,8 @@ async function checkLogin(browser, discordClient) {
     // Enter Passcode
     await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     const passcodeInputs = await page.$$('input[type="password"]');
-    for (let i = 0; i < PASSCODE.length; i++) {
-      await passcodeInputs[i].type(PASSCODE[i]);
+    for (let i = 0; i < passcode.length; i++) {
+      await passcodeInputs[i].type(passcode[i]);
       await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between digits
     }
     console.log('Passcode entered');
@@ -926,8 +926,14 @@ async function checkPMSDashboard(browser) {
 }
 
 // Main execution
-async function main(discordClient) {
+async function main(discordClient, userPAN, userPasscode) {
   console.log('Starting NAV and Login check...');
+  
+  // Use provided credentials or fallback to .env
+  const PAN_NUMBER = userPAN || process.env.PAN_NUMBER;
+  const PASSCODE = userPasscode || process.env.PASSCODE;
+  
+  console.log(`Using PAN: ${PAN_NUMBER}`);
   
   let browser;
   try {
@@ -961,7 +967,7 @@ async function main(discordClient) {
       console.log('Skipping login check (SKIP_LOGIN_CHECK = true)...');
       loginResult = { success: true, userName: 'Skipped', skipped: true };
     } else {
-      loginResult = await checkLogin(browser, discordClient);
+      loginResult = await checkLogin(browser, discordClient, PAN_NUMBER, PASSCODE);
     }
     
     // Check MF Account Statement (runs after login, before logout)
