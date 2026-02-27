@@ -22,8 +22,8 @@ const PMS_PAN = 'AINPB3346D';
 
 // Feature Flags
 const SKIP_LOGIN_CHECK = false; // Set to false to enable login check
-const SKIP_PMS_DASHBOARD_CHECK = false; // Set to false to enable PMS dashboard check
-const SKIP_MF_ACCOUNT_STATEMENT_CHECK = false; // Set to false to enable MF account statement check
+const SKIP_PMS_DASHBOARD_CHECK = true; // Set to false to enable PMS dashboard check
+const SKIP_MF_ACCOUNT_STATEMENT_CHECK = true; // Set to false to enable MF account statement check
 
 // Function to get expected NAV date (yesterday or Friday if today is Monday)
 function getExpectedNAVDate() {
@@ -1007,7 +1007,10 @@ async function main(discordClient, userPAN, userPasscode) {
     
     // Check Account Performance Report
     let accountPerfResult;
-    if (pmsResult.success && !pmsResult.skipped) {
+    if (SKIP_PMS_DASHBOARD_CHECK) {
+      console.log('Skipping Account Performance Report check (SKIP_PMS_DASHBOARD_CHECK = true)...');
+      accountPerfResult = { success: true, skipped: true };
+    } else if (pmsResult.success && !pmsResult.skipped) {
       accountPerfResult = await checkAccountPerformance(browser);
     } else {
       accountPerfResult = { success: false, error: 'Skipped due to PMS Dashboard check being disabled or failed' };
@@ -1064,8 +1067,10 @@ async function main(discordClient, userPAN, userPasscode) {
     }
     
     // 6. Account Performance Report Status
-    if (accountPerfResult.success) {
+    if (accountPerfResult.success && !accountPerfResult.skipped) {
       message += `6. Account performance report for PMS is working fine\n`;
+    } else if (accountPerfResult.skipped) {
+      message += `6. Account performance report for PMS check skipped\n`;
     } else {
       message += `6. Account performance report for PMS failed\n`;
     }
