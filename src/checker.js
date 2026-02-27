@@ -455,33 +455,30 @@ async function checkMFAccountStatement(browser) {
     ]);
 
     await new Promise(resolve => setTimeout(resolve, 3000));
-    const reportUrl = reportPage.url();
+    let reportUrl = reportPage.url();
     console.log('Report opened in new tab:', reportUrl);
 
-    // Verify it's a PDF or report URL
-    if (!reportUrl.includes('.pdf') && !reportUrl.includes('report')) {
-      throw new Error('Opened page is not a report');
+    // Wait for dynamic PDF URL if not loaded yet
+    if (!reportUrl.includes('MFSIPReport_') && !reportUrl.includes('.pdf')) {
+      console.log('Waiting for PDF URL to load...');
+      await reportPage.waitForNavigation({ timeout: 10000 }).catch(() => {});
+      reportUrl = reportPage.url();
+      console.log('PDF URL after navigation:', reportUrl);
     }
 
-    // Check if report is accessible
-    const axios = require('axios');
-    try {
-      const response = await axios.head(reportUrl, { timeout: 5000 });
-      if (response.status === 200) {
-        console.log('MF Account Statement report generated successfully');
-        await reportPage.close();
-        await page.close();
-        return { 
-          success: true, 
-          message: 'MF Account Statement report generated successfully',
-          reportUrl: reportUrl
-        };
-      } else {
-        throw new Error(`Report returned status ${response.status}`);
-      }
-    } catch (error) {
-      throw new Error(`Report accessibility check failed: ${error.message}`);
+    // Verify it's the MF SIP Report PDF
+    if (!reportUrl.includes('MFSIPReport_') || !reportUrl.includes('.pdf')) {
+      throw new Error('Expected MFSIPReport PDF URL not found');
     }
+
+    console.log('MF Account Statement report generated successfully');
+    await reportPage.close();
+    await page.close();
+    return { 
+      success: true, 
+      message: 'MF Account Statement report generated successfully',
+      reportUrl: reportUrl
+    };
 
   } catch (error) {
     console.error('MF Account Statement check failed:', error);
@@ -981,18 +978,59 @@ async function main(discordClient, userPAN, userPasscode) {
       mfAccountStatementResult = { success: false, error: 'Skipped due to login check being disabled or failed' };
     }
     
-    // Logout after MF checks (clear cookies)
+    // Logout after MF checks (click logout button)
     if (loginResult.success && !loginResult.skipped) {
-      console.log('Clearing cookies to logout from MF dashboard...');
+      console.log('Logging out from MF dashboard...');
       try {
-        const pages = await browser.pages();
-        if (pages.length > 0) {
-          const client = await pages[0].target().createCDPSession();
-          await client.send('Network.clearBrowserCookies');
-          console.log('Cookies cleared - logged out successfully');
+        const logoutPage = await browser.newPage();
+        
+        console.log('Navigating to home page for logout...');
+        await logoutPage.goto('https://invest.motilaloswalmf.com/', {
+          waitUntil: 'networkidle2',
+          timeout: 30000
+        });
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Click on user profile icon to open popup
+        console.log('Clicking user profile icon...');
+        const profileClicked = await logoutPage.evaluate(() => {
+          const profileIcon = document.getElementsByClassName('MuiBox-root css-1f3y13q')[0];
+          if (profileIcon) {
+            profileIcon.click();
+            return true;
+          }
+          return false;
+        });
+        
+        if (!profileClicked) {
+          throw new Error('Profile icon not found');
         }
+        
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Click Logout button in popup
+        console.log('Clicking Logout button...');
+        const logoutClicked = await logoutPage.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button'));
+          for (const btn of buttons) {
+            if (btn.textContent.includes('Logout')) {
+              btn.click();
+              return true;
+            }
+          }
+          return false;
+        });
+        
+        if (logoutClicked) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          console.log('Logged out successfully');
+        } else {
+          console.log('Logout button not found');
+        }
+        
+        await logoutPage.close();
       } catch (e) {
-        console.log('Cookie clearing failed:', e.message);
+        console.log('Logout failed:', e.message);
       }
     }
     
