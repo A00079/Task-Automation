@@ -17,6 +17,12 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
+// Add error handler for Discord client
+client.on('error', (error) => {
+  console.error('Discord client error:', error.message);
+  // Don't crash, just log the error
+});
+
 client.once('ready', () => {
   console.log('✅ Discord bot is online and ready!');
   console.log('Type "Jarvis wake up" to run checks...');
@@ -76,4 +82,7 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-client.login(DISCORD_BOT_TOKEN);
+client.login(DISCORD_BOT_TOKEN).catch(error => {
+  console.error('Failed to login to Discord:', error.message);
+  process.exit(1);
+});

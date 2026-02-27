@@ -22,8 +22,8 @@ const PMS_PAN = 'AINPB3346D';
 
 // Feature Flags
 const SKIP_LOGIN_CHECK = false; // Set to false to enable login check
-const SKIP_PMS_DASHBOARD_CHECK = true; // Set to false to enable PMS dashboard check
-const SKIP_MF_ACCOUNT_STATEMENT_CHECK = true; // Set to false to enable MF account statement check
+const SKIP_PMS_DASHBOARD_CHECK = false; // Set to false to enable PMS dashboard check
+const SKIP_MF_ACCOUNT_STATEMENT_CHECK = false; // Set to false to enable MF account statement check
 
 // Function to get expected NAV date (yesterday or Friday if today is Monday)
 function getExpectedNAVDate() {
@@ -323,6 +323,23 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     }
     console.log('Submit button clicked, waiting for dashboard...');
     
+    // Check for any error messages immediately after click
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const passcodeError = await page.evaluate(() => {
+      const errorElements = document.querySelectorAll('.error-message, .Mui-error, [role="alert"]');
+      for (const el of errorElements) {
+        const text = el.textContent.trim();
+        if (text && text !== 'Please enter OTP' && text !== 'Enter PAN number') {
+          return text;
+        }
+      }
+      return null;
+    });
+    
+    if (passcodeError) {
+      throw new Error(`Passcode submission failed: ${passcodeError}`);
+    }
+    
     // Wait for navigation to dashboard (different domain)
     await Promise.race([
       page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => console.log('Navigation timeout')),
@@ -333,6 +350,12 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     // Wait for SSO redirect to complete
     let finalUrl = page.url();
     console.log(`Current URL: ${finalUrl}`);
+    
+    // If still on passcode page, there's an issue
+    if (finalUrl.includes('/passcode')) {
+      await page.screenshot({ path: '/tmp/passcode-stuck.png' });
+      throw new Error('Still on passcode page after submit - passcode might be incorrect');
+    }
     
     if (finalUrl.includes('/sso')) {
       console.log('On SSO page, waiting for final redirect...');
