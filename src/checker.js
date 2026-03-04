@@ -25,6 +25,16 @@ const SKIP_LOGIN_CHECK = false; // Set to false to enable login check
 const SKIP_PMS_DASHBOARD_CHECK = false; // Set to false to enable PMS dashboard check
 const SKIP_MF_ACCOUNT_STATEMENT_CHECK = false; // Set to false to enable MF account statement check
 
+// Stealth Helper: Random delay between min and max milliseconds
+function randomDelay(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Stealth Helper: Human-like wait
+async function humanWait(minMs = 1000, maxMs = 3000) {
+  await new Promise(resolve => setTimeout(resolve, randomDelay(minMs, maxMs)));
+}
+
 // Function to get expected NAV date (yesterday or Friday if today is Monday)
 function getExpectedNAVDate() {
   // Get current date in IST (UTC+5:30)
@@ -180,10 +190,20 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
   try {
     const page = await browser.newPage();
     
+    // Set realistic viewport
+    await page.setViewport({ width: 1920, height: 1080 });
+    
+    // Set realistic user agent
+    await page.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+    
     // Make Puppeteer undetectable
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
       window.navigator.chrome = { runtime: {} };
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
     });
     
     console.log('Navigating to login page...');
@@ -193,16 +213,121 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
       timeout: 30000
     });
 
-    // Enter PAN
+    // Enter PAN using setReactValue with human-like delay
     await page.waitForSelector('input[name="panNo"]', { timeout: 10000 });
-    await page.type('input[name="panNo"]', panNumber);
-    console.log('PAN entered');
+    await humanWait(500, 1500);
+    
+    // Try setReactValue first
+    try {
+      await setReactValue(page, 'input[name="panNo"]', panNumber);
+      console.log('PAN entered using setReactValue');
+    } catch (e) {
+      console.log('setReactValue failed, using type method:', e.message);
+      await page.click('input[name="panNo"]');
+      await page.type('input[name="panNo"]', panNumber);
+      console.log('PAN entered using type method');
+    }
+    
+    await humanWait(1500, 2500);
+    
+    // Verify PAN was entered
+    const panValue = await page.$eval('input[name="panNo"]', el => el.value);
+    console.log(`PAN field value: "${panValue}"`);
+    
+    if (panValue !== panNumber) {
+      console.log('PAN value mismatch, retrying with type method...');
+      await page.click('input[name="panNo"]', { clickCount: 3 });
+      await page.keyboard.press('Backspace');
+      await page.type('input[name="panNo"]', panNumber);
+      await humanWait(1000, 1500);
+    }
 
-    // Click Authenticate
-    await page.click('button.yg_submitBtn');
-    console.log('Waiting for OTP field...');
-    await new Promise(resolve => setTimeout(resolve, 5000));
-
+    // Click Authenticate with human-like delay
+    await humanWait(800, 1500);
+    console.log('Clicking Authenticate button...');
+    
+    // Try multiple methods to click the button
+    try {
+      // Method 1: Direct click
+      await page.click('button.yg_submitBtn');
+    } catch (e) {
+      console.log('Direct click failed, trying evaluate click...');
+      // Method 2: JavaScript click
+      await page.evaluate(() => {
+        const btn = document.querySelector('button.yg_submitBtn');
+        if (btn) btn.click();
+      });
+    }
+    
+    console.log('Authenticate button clicked, waiting for OTP field...');
+    
+    // Wait for either OTP field or navigation
+    await Promise.race([
+      page.waitForSelector('input[name="otp"]', { timeout: 15000 }).catch(() => {}),
+      page.waitForNavigation({ timeout: 15000 }).catch(() => {}),
+      new Promise(resolve => setTimeout(resolve, 10000))
+    ]);
+    
+    // Check if OTP field appeared or if there's an error
+    const pageState = await page.evaluate(() => {
+      const otpField = document.querySelector('input[name="otp"]');
+      const errorElements = document.querySelectorAll('.error-message, .Mui-error, [role="alert"]');
+      let errorMsg = null;
+      
+      for (const el of errorElements) {
+        const text = el.textContent.trim();
+        if (text && text !== 'Enter PAN number' && text !== '') {
+          errorMsg = text;
+          break;
+        }
+      }
+      
+      // Check if button is still there (form didn't submit)
+      const authButton = document.querySelector('button.yg_submitBtn');
+      const buttonText = authButton ? authButton.textContent.trim() : null;
+      
+      return {
+        hasOtpField: !!otpField,
+        errorMessage: errorMsg,
+        currentUrl: window.location.href,
+        buttonStillPresent: !!authButton,
+        buttonText: buttonText
+      };
+    });
+    
+    console.log('Page state after Authenticate:', pageState);
+    
+    if (pageState.errorMessage) {
+      throw new Error(`Authentication failed: ${pageState.errorMessage}`);
+    }
+    
+    // If button is still present, form didn't submit - try pressing Enter
+    if (pageState.buttonStillPresent && !pageState.hasOtpField) {
+      console.log('Form did not submit, trying Enter key...');
+      await page.focus('input[name="panNo"]');
+      await page.keyboard.press('Enter');
+      await humanWait(5000, 7000);
+      
+      const otpFieldExists = await page.$('input[name="otp"]');
+      if (!otpFieldExists) {
+        // Take screenshot for debugging
+        await page.screenshot({ path: '/tmp/no-otp-field.png' });
+        throw new Error('OTP field did not appear after clicking Authenticate. Check screenshot at /tmp/no-otp-field.png');
+      }
+    } else if (!pageState.hasOtpField) {
+      // Take screenshot for debugging
+      await page.screenshot({ path: '/tmp/no-otp-field.png' });
+      
+      // Wait a bit more
+      console.log('OTP field not found, waiting additional time...');
+      await humanWait(3000, 5000);
+      
+      const otpFieldExists = await page.$('input[name="otp"]');
+      if (!otpFieldExists) {
+        throw new Error('OTP field did not appear after clicking Authenticate. Check screenshot at /tmp/no-otp-field.png');
+      }
+    }
+    
     // Send Discord message for OTP
     await sendDiscordMessage('⏳ **Waiting for OTP**\n\nPlease reply with the 6-digit OTP you received.');
 
@@ -211,11 +336,31 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     const otp = await waitForOTP(discordClient);
     console.log(`Got OTP: ${otp}, now entering it...`);
 
-    // Enter OTP
+    // Enter OTP using setReactValue to ensure React state updates
     await page.waitForSelector('input[name="otp"]', { timeout: 10000 });
-    await page.type('input[name="otp"]', otp);
-    console.log('OTP entered');
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Clear any existing value first
+    await page.evaluate(() => {
+      const otpInput = document.querySelector('input[name="otp"]');
+      if (otpInput) otpInput.value = '';
+    });
+    
+    // Use setReactValue for React-controlled input with human-like delay
+    await humanWait(800, 1500);
+    await setReactValue(page, 'input[name="otp"]', otp);
+    console.log('OTP entered using setReactValue');
+    await humanWait(2500, 3500);
+    
+    // Verify OTP was entered
+    const otpValue = await page.$eval('input[name="otp"]', el => el.value);
+    console.log(`OTP field value after entry: "${otpValue}"`);
+    
+    if (otpValue !== otp) {
+      console.log('OTP value mismatch, trying direct type method...');
+      await page.click('input[name="otp"]');
+      await page.keyboard.type(otp);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
 
     // Click Submit button (NOT the Resend OTP button)
     console.log('Clicking OTP submit button...');
@@ -240,11 +385,12 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     }
     
     console.log('Clicking the correct Submit button...');
+    await humanWait(500, 1200);
     await correctButton.click();
     
     // Wait for navigation with longer timeout
     console.log('Waiting for navigation to passcode page...');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    await humanWait(4500, 5500);
     
     // Check current URL
     let currentUrl = page.url();
@@ -253,7 +399,7 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     // If still on login page, wait a bit more for navigation
     if (currentUrl.includes('/login') && !currentUrl.includes('/passcode')) {
       console.log('Still on login page, waiting for navigation...');
-      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {
+      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
         console.log('Navigation wait timed out');
       });
       currentUrl = page.url();
@@ -280,21 +426,21 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
         throw new Error(`OTP submission failed: ${errorMsg}`);
       }
       
-      await page.screenshot({ path: '/tmp/otp-failed.png' });
       throw new Error(`Failed to reach passcode page. OTP might be incorrect. Current URL: ${currentUrl}`);
     }
     
     console.log('Successfully reached passcode page!');
 
-    // Enter Passcode
+    // Enter Passcode with human-like typing
     await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+    await humanWait(1500, 2500);
     const passcodeInputs = await page.$$('input[type="password"]');
     for (let i = 0; i < passcode.length; i++) {
       await passcodeInputs[i].type(passcode[i]);
-      await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between digits
+      await new Promise(resolve => setTimeout(resolve, randomDelay(100, 250)));
     }
     console.log('Passcode entered');
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await humanWait(1500, 2500);
 
     // Toggle "Discover the New Experience" switch to ON
     console.log('Checking toggle switch...');
@@ -406,7 +552,7 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     }
 
   } catch (error) {
-    console.error('Login check failed:', error);
+    console.error('Login check failed:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -504,7 +650,7 @@ async function checkMFAccountStatement(browser) {
     };
 
   } catch (error) {
-    console.error('MF Account Statement check failed:', error);
+    console.error('MF Account Statement check failed:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -672,7 +818,7 @@ async function checkAccountPerformance(browser) {
     }
 
   } catch (error) {
-    console.error('Account Performance check failed:', error);
+    console.error('Account Performance check failed:', error.message);
     return { success: false, error: error.message };
   }
 }
@@ -714,7 +860,28 @@ async function checkPMSDashboard(browser) {
     console.log('Navigated to admin dashboard page');
 
     // ── STEP 2: Select PMS from dropdown ────────────────────────────────────
-    await page.waitForSelector('select[name="name"]', { timeout: 10000 });
+    console.log('Waiting for dropdown to appear...');
+    
+    // Wait longer and check if dropdown exists
+    try {
+      await page.waitForSelector('select[name="name"]', { timeout: 15000 });
+    } catch (e) {
+      console.log('Dropdown not found, checking page state...');
+      await page.screenshot({ path: '/tmp/pms-no-dropdown.png' });
+      
+      const pageInfo = await page.evaluate(() => {
+        return {
+          url: window.location.href,
+          hasForm: !!document.querySelector('form'),
+          hasSelect: !!document.querySelector('select'),
+          bodyText: document.body.innerText.substring(0, 300)
+        };
+      });
+      
+      console.log('Page info:', pageInfo);
+      throw new Error('Dropdown select[name="name"] not found. Check screenshot at /tmp/pms-no-dropdown.png');
+    }
+    
     await setReactValue(page, 'select[name="name"]', 'PMS');
 
     const selectedVal = await page.$eval('select[name="name"]', el => el.value);
@@ -940,7 +1107,7 @@ async function checkPMSDashboard(browser) {
     }
 
   } catch (error) {
-    console.error('PMS dashboard check failed:', error);
+    console.error('PMS dashboard check failed:', error.message);
     return { success: false, error: error.message, userName: null };
   }
 }
@@ -965,17 +1132,28 @@ async function main(discordClient, userPAN, userPasscode) {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--disable-blink-features=AutomationControlled'
+        '--disable-blink-features=AutomationControlled',
+        '--window-size=1920,1080'
       ]
     });
 
     // Check NAV
     const page = await browser.newPage();
     
+    // Set realistic viewport
+    await page.setViewport({ width: 1920, height: 1080 });
+    
+    // Set realistic user agent
+    await page.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+    
     // Make Puppeteer undetectable
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
       window.navigator.chrome = { runtime: {} };
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
     });
     
     const navResult = await checkNAVWithPage(page);
@@ -1153,7 +1331,7 @@ async function main(discordClient, userPAN, userPasscode) {
     console.log('Check completed.');
     
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error:', error.message);
     await sendDiscordMessage(`❌ **Error:** ${error.message}`);
   } finally {
     if (browser) {
