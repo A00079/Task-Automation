@@ -31,7 +31,8 @@ client.once('ready', () => {
 let isRunning = false;
 let awaitingPAN = false;
 let awaitingPasscode = false;
-let userCredentials = { pan: null, passcode: null };
+let awaitingKFintech = false;
+let userCredentials = { pan: null, passcode: null, kfintechAUM: null, kfintechCost: null };
 
 client.on('messageCreate', async (message) => {
   if (message.channelId === DISCORD_CHANNEL_ID && !message.author.bot) {
@@ -50,17 +51,32 @@ client.on('messageCreate', async (message) => {
     if (awaitingPasscode) {
       userCredentials.passcode = content;
       awaitingPasscode = false;
-      
-      console.log('Credentials received, starting checks...');
-      await message.reply('🚀 Starting checks with provided credentials...');
-      
-      try {
-        await main(client, userCredentials.pan, userCredentials.passcode);
-      } catch (error) {
-        console.error('Error running checks:', error);
-      } finally {
-        isRunning = false;
-        userCredentials = { pan: null, passcode: null };
+      awaitingKFintech = true;
+      await message.reply('✅ Passcode received. Please enter KFintech values:\n\nFormat: `Assets_Under_Management Cost_Value`\nExample: `1660.12 1511.53`');
+      return;
+    }
+    
+    // Handle KFintech values input
+    if (awaitingKFintech) {
+      const match = content.match(/^([\d,]+\.?\d*)\s*[,\s]\s*([\d,]+\.?\d*)$/);
+      if (match) {
+        userCredentials.kfintechAUM = parseFloat(match[1].replace(/,/g, ''));
+        userCredentials.kfintechCost = parseFloat(match[2].replace(/,/g, ''));
+        awaitingKFintech = false;
+        
+        console.log('Credentials received, starting checks...');
+        await message.reply('🚀 Starting checks with provided credentials...');
+        
+        try {
+          await main(client, userCredentials.pan, userCredentials.passcode, userCredentials.kfintechAUM, userCredentials.kfintechCost);
+        } catch (error) {
+          console.error('Error running checks:', error);
+        } finally {
+          isRunning = false;
+          userCredentials = { pan: null, passcode: null, kfintechAUM: null, kfintechCost: null };
+        }
+      } else {
+        await message.reply('❌ Invalid format. Please use: `AUM Cost_Value`\nExample: `1660.12 1511.53`');
       }
       return;
     }

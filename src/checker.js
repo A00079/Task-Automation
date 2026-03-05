@@ -185,6 +185,37 @@ async function waitForOTP(existingClient) {
   });
 }
 
+// Function to wait for KFintech values from Discord
+async function waitForKFintechValues(existingClient) {
+  return new Promise((resolve, reject) => {
+    const messageHandler = (msg) => {
+      if (msg.channelId === DISCORD_CHANNEL_ID && !msg.author.bot) {
+        const content = msg.content.trim();
+        // Expected format: "1234.56 7890.12" or "1234.56,7890.12"
+        const match = content.match(/^([\d,]+\.?\d*)\s*[,\s]\s*([\d,]+\.?\d*)$/);
+        if (match) {
+          const aum = parseFloat(match[1].replace(/,/g, ''));
+          const costValue = parseFloat(match[2].replace(/,/g, ''));
+          if (!isNaN(aum) && !isNaN(costValue)) {
+            console.log(`KFintech values received - AUM: ${aum}, Cost: ${costValue}`);
+            clearTimeout(timeout);
+            existingClient.removeListener('messageCreate', messageHandler);
+            resolve({ aum, costValue });
+          }
+        }
+      }
+    };
+
+    const timeout = setTimeout(() => {
+      existingClient.removeListener('messageCreate', messageHandler);
+      reject(new Error('KFintech values timeout - no response received within 2 minutes'));
+    }, 120000);
+
+    console.log('Setting up KFintech values listener...');
+    existingClient.on('messageCreate', messageHandler);
+  });
+}
+
 // Function to check login
 async function checkLogin(browser, discordClient, panNumber, passcode) {
   try {
@@ -306,13 +337,15 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
       console.log('Form did not submit, trying Enter key...');
       await page.focus('input[name="panNo"]');
       await page.keyboard.press('Enter');
-      await humanWait(5000, 7000);
+      await humanWait(8000, 10000);
       
       const otpFieldExists = await page.$('input[name="otp"]');
       if (!otpFieldExists) {
         // Take screenshot for debugging
         await page.screenshot({ path: '/tmp/no-otp-field.png' });
-        throw new Error('OTP field did not appear after clicking Authenticate. Check screenshot at /tmp/no-otp-field.png');
+        const html = await page.content();
+        require('fs').writeFileSync('/tmp/no-otp-field.html', html);
+        throw new Error('OTP field did not appear. PAN might be invalid or website changed. Check /tmp/no-otp-field.png');
       }
     } else if (!pageState.hasOtpField) {
       // Take screenshot for debugging
@@ -320,11 +353,13 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
       
       // Wait a bit more
       console.log('OTP field not found, waiting additional time...');
-      await humanWait(3000, 5000);
+      await humanWait(5000, 7000);
       
       const otpFieldExists = await page.$('input[name="otp"]');
       if (!otpFieldExists) {
-        throw new Error('OTP field did not appear after clicking Authenticate. Check screenshot at /tmp/no-otp-field.png');
+        const html = await page.content();
+        require('fs').writeFileSync('/tmp/no-otp-field.html', html);
+        throw new Error('OTP field did not appear. PAN might be invalid or website changed. Check /tmp/no-otp-field.png');
       }
     }
     
@@ -557,8 +592,59 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     
     if (userName) {
       console.log(`Login successful: ${userName}`);
+      
+      // Extract Current Value and Total Investment from dashboard
+      const portfolioData = await page.evaluate(() => {
+        // Try multiple selectors for Current Value
+        let currentValue = null;
+        let totalInvestment = null;
+        
+        // Method 1: Direct class selector
+        const cvEl1 = document.querySelector('p.css-1pjxbyt');
+        if (cvEl1) {
+          const text = cvEl1.textContent.replace(/₹|,|\s/g, '');
+          currentValue = parseFloat(text);
+        }
+        
+        // Method 2: Find by text content
+        if (!currentValue) {
+          const allP = Array.from(document.querySelectorAll('p'));
+          for (const p of allP) {
+            const prevP = p.previousElementSibling;
+            if (prevP && prevP.textContent.includes('Current Value')) {
+              const text = p.textContent.replace(/₹|,|\s/g, '');
+              currentValue = parseFloat(text);
+              break;
+            }
+          }
+        }
+        
+        // Method 1 for Total Investment: Direct class selector
+        const tiEl1 = document.querySelector('p.css-wu85w4');
+        if (tiEl1) {
+          const text = tiEl1.textContent.replace(/₹|,|\s/g, '');
+          totalInvestment = parseFloat(text);
+        }
+        
+        // Method 2: Find by text content
+        if (!totalInvestment) {
+          const allP = Array.from(document.querySelectorAll('p'));
+          for (const p of allP) {
+            const prevP = p.previousElementSibling;
+            if (prevP && prevP.textContent.includes('Total Investment')) {
+              const text = p.textContent.replace(/₹|,|\s/g, '');
+              totalInvestment = parseFloat(text);
+              break;
+            }
+          }
+        }
+        
+        return { currentValue, totalInvestment };
+      });
+      
+      console.log('Portfolio data extracted:', portfolioData);
       await page.close();
-      return { success: true, userName };
+      return { success: true, userName, portfolioData };
     } else {
       throw new Error('Reached dashboard but could not find username');
     }
@@ -1125,14 +1211,20 @@ async function checkPMSDashboard(browser) {
 }
 
 // Main execution
-async function main(discordClient, userPAN, userPasscode) {
+async function main(discordClient, userPAN, userPasscode, kfintechAUM, kfintechCost) {
   console.log('Starting NAV and Login check...');
   
   // Use provided credentials or fallback to .env
   const PAN_NUMBER = userPAN || process.env.PAN_NUMBER;
   const PASSCODE = userPasscode || process.env.PASSCODE;
   
+  // Store KFintech values for later use
+  const kfintechValues = (kfintechAUM && kfintechCost) ? { aum: kfintechAUM, costValue: kfintechCost } : null;
+  
   console.log(`Using PAN: ${PAN_NUMBER}`);
+  if (kfintechValues) {
+    console.log(`KFintech values: AUM=${kfintechValues.aum}, Cost=${kfintechValues.costValue}`);
+  }
   
   let browser;
   try {
@@ -1178,6 +1270,42 @@ async function main(discordClient, userPAN, userPasscode) {
       loginResult = { success: true, userName: 'Skipped', skipped: true };
     } else {
       loginResult = await checkLogin(browser, discordClient, PAN_NUMBER, PASSCODE);
+    }
+    
+    // KFintech Sync Check
+    let kfintechSyncResult = null;
+    if (loginResult.success && !loginResult.skipped && loginResult.portfolioData) {
+      const { currentValue, totalInvestment } = loginResult.portfolioData;
+      
+      // Check if portfolio data was extracted successfully
+      if (currentValue && totalInvestment && kfintechValues) {
+        try {
+          const { aum, costValue } = kfintechValues;
+          
+          const currentValueDiff = Math.abs(currentValue - aum);
+          const totalInvestmentDiff = Math.abs(totalInvestment - costValue);
+          
+          const isCurrentValueMatch = currentValueDiff <= 20;
+          const isTotalInvestmentMatch = totalInvestmentDiff <= 20;
+          const isPerfectSync = isCurrentValueMatch && isTotalInvestmentMatch;
+          
+          kfintechSyncResult = {
+            success: true,
+            motilalOswal: { currentValue, totalInvestment },
+            kfintech: { aum, costValue },
+            differences: { currentValueDiff, totalInvestmentDiff },
+            isPerfectSync
+          };
+          
+          console.log('KFintech sync check completed:', kfintechSyncResult);
+        } catch (error) {
+          console.error('KFintech sync check failed:', error.message);
+          kfintechSyncResult = { success: false, error: error.message };
+        }
+      } else {
+        console.log('Skipping KFintech sync - portfolio data or KFintech values missing');
+        kfintechSyncResult = { success: false, error: 'Portfolio data extraction failed or KFintech values not provided' };
+      }
     }
     
     // Check MF Account Statement (runs after login, before logout)
@@ -1324,6 +1452,26 @@ async function main(discordClient, userPAN, userPasscode) {
       message += `6. Account performance report for PMS check skipped\n`;
     } else {
       message += `6. Account performance report for PMS failed\n`;
+    }
+    
+    // KFintech Sync Status (after all checks)
+    if (kfintechSyncResult && kfintechSyncResult.success) {
+      const { motilalOswal, kfintech, differences, isPerfectSync } = kfintechSyncResult;
+      const icon = isPerfectSync ? '✅' : '❌';
+      
+      message += `\n**KFintech Sync Status**\n\n`;
+      message += `Portfolio reconciliation with KFintech\n`;
+      message += `   ${icon} Motilal Oswal\n`;
+      message += `      Current Value: ₹${motilalOswal.currentValue.toFixed(2)}\n`;
+      message += `      Total Investment: ₹${motilalOswal.totalInvestment.toFixed(2)}\n`;
+      message += `   ${icon} KFintech\n`;
+      message += `      Assets Under Management: ₹${kfintech.aum.toFixed(2)}\n`;
+      message += `      Cost Value: ₹${kfintech.costValue.toFixed(2)}\n`;
+      message += `   ${icon} Match: ${isPerfectSync ? 'Perfect sync' : 'Not Perfect sync'}\n`;
+      message += `   ⚠️ Difference: ₹${Math.max(differences.currentValueDiff, differences.totalInvestmentDiff).toFixed(2)} difference detected!\n`;
+    } else if (kfintechSyncResult && !kfintechSyncResult.success) {
+      message += `\n**KFintech Sync Status**\n`;
+      message += `❌ KFintech sync check failed: ${kfintechSyncResult.error}\n`;
     }
     
     // Add timestamp
