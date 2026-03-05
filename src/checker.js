@@ -22,7 +22,7 @@ const PMS_PAN = 'AINPB3346D';
 
 // Feature Flags
 const SKIP_LOGIN_CHECK = false; // Set to false to enable login check
-const SKIP_PMS_DASHBOARD_CHECK = false; // Set to false to enable PMS dashboard check
+const SKIP_PMS_DASHBOARD_CHECK = true; // Set to false to enable PMS dashboard check
 const SKIP_MF_ACCOUNT_STATEMENT_CHECK = false; // Set to false to enable MF account statement check
 
 // Stealth Helper: Random delay between min and max milliseconds
@@ -386,47 +386,59 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     
     console.log('Clicking the correct Submit button...');
     await humanWait(500, 1200);
-    await correctButton.click();
     
-    // Wait for navigation with longer timeout
-    console.log('Waiting for navigation to passcode page...');
-    await humanWait(4500, 5500);
+    // Click and wait for either navigation or error message
+    await correctButton.click();
+    console.log('Submit button clicked, waiting for response...');
+    
+    // Wait for either URL change or error message to appear
+    await Promise.race([
+      page.waitForFunction(
+        () => window.location.href.includes('/passcode') || 
+              document.querySelector('.error-message')?.textContent.trim(),
+        { timeout: 20000 }
+      ),
+      new Promise(resolve => setTimeout(resolve, 20000))
+    ]);
+    
+    // Check for error messages first
+    const errorMsg = await page.evaluate(() => {
+      const errorElements = document.querySelectorAll('.error-message, .Mui-error, [role="alert"]');
+      for (const el of errorElements) {
+        const text = el.textContent.trim();
+        if (text && text !== 'Please enter OTP' && text !== 'Enter PAN number' && text !== '') {
+          return text;
+        }
+      }
+      return null;
+    });
+    
+    if (errorMsg) {
+      throw new Error(`OTP submission failed: ${errorMsg}`);
+    }
     
     // Check current URL
     let currentUrl = page.url();
     console.log(`Current URL after submit: ${currentUrl}`);
     
-    // If still on login page, wait a bit more for navigation
-    if (currentUrl.includes('/login') && !currentUrl.includes('/passcode')) {
-      console.log('Still on login page, waiting for navigation...');
-      await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
-        console.log('Navigation wait timed out');
-      });
+    // If not on passcode page yet, wait longer
+    if (!currentUrl.includes('/passcode')) {
+      console.log('Not on passcode page yet, waiting longer...');
+      
+      // Try waiting for navigation one more time
+      await page.waitForNavigation({ 
+        waitUntil: 'domcontentloaded', 
+        timeout: 15000 
+      }).catch(() => console.log('Final navigation wait timed out'));
+      
       currentUrl = page.url();
-      console.log(`URL after wait: ${currentUrl}`);
+      console.log(`URL after extended wait: ${currentUrl}`);
     }
 
     if (!currentUrl.includes('/passcode')) {
-      const errorMsg = await page.evaluate(() => {
-        const errorDiv = document.querySelector('.error-message');
-        if (errorDiv && errorDiv.textContent.trim()) {
-          return errorDiv.textContent.trim();
-        }
-        const allErrors = Array.from(document.querySelectorAll('.error-message'));
-        for (const err of allErrors) {
-          const text = err.textContent.trim();
-          if (text && text !== 'Please enter OTP' && text !== 'Enter PAN number') {
-            return text;
-          }
-        }
-        return null;
-      });
-      
-      if (errorMsg) {
-        throw new Error(`OTP submission failed: ${errorMsg}`);
-      }
-      
-      throw new Error(`Failed to reach passcode page. OTP might be incorrect. Current URL: ${currentUrl}`);
+      // Take screenshot for debugging
+      await page.screenshot({ path: '/tmp/otp-submit-failed.png' });
+      throw new Error(`Failed to reach passcode page after OTP submit. Current URL: ${currentUrl}. Check /tmp/otp-submit-failed.png`);
     }
     
     console.log('Successfully reached passcode page!');
