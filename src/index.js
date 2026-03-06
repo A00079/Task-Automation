@@ -6,11 +6,29 @@ require('dotenv').config();
 const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 
-// Create HTTP server for Render
+// Validate required environment variables
+if (!DISCORD_BOT_TOKEN) {
+  console.error('❌ ERROR: DISCORD_BOT_TOKEN is not set in environment variables');
+  console.error('Please set the following environment variables in Railway:');
+  console.error('- DISCORD_BOT_TOKEN');
+  console.error('- DISCORD_CHANNEL_ID');
+  console.error('- DISCORD_WEBHOOK_URL');
+  process.exit(1);
+}
+
+if (!DISCORD_CHANNEL_ID) {
+  console.error('❌ ERROR: DISCORD_CHANNEL_ID is not set in environment variables');
+  process.exit(1);
+}
+
+console.log('✅ Environment variables loaded successfully');
+
+// Create HTTP server for Railway
 const app = express();
 app.get('/', (req, res) => res.send('Bot is running!'));
-app.listen(process.env.PORT || 3000, () => {
-  console.log('HTTP server running on port', process.env.PORT || 3000);
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`HTTP server running on port ${PORT}`);
 });
 
 const client = new Client({
