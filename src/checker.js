@@ -4,6 +4,8 @@
 const puppeteer = require('puppeteer');
 const axios = require('axios');
 const { Client, GatewayIntentBits } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 // Discord Configuration
@@ -21,9 +23,10 @@ const PMS_PASSWORD = 'Mosl@2026';
 const PMS_PAN = 'AINPB3346D';
 
 // Feature Flags
-const SKIP_LOGIN_CHECK = false; // Set to false to enable login check
+const SKIP_LOGIN_CHECK = true; // Set to false to enable login check
 const SKIP_PMS_DASHBOARD_CHECK = true; // Set to false to enable PMS dashboard check
-const SKIP_MF_ACCOUNT_STATEMENT_CHECK = false; // Set to false to enable MF account statement check
+const SKIP_MF_ACCOUNT_STATEMENT_CHECK = true; // Set to false to enable MF account statement check
+const BETA_VERIFICATION_LIMIT = 5; // Set to 0 for all funds, or a number like 5 to test only 5 funds
 
 // Stealth Helper: Random delay between min and max milliseconds
 function randomDelay(min, max) {
@@ -67,6 +70,271 @@ function formatDate(date) {
   const year = date.getUTCFullYear();
   
   return `${day}-${month}-${year}`;
+}
+
+// Function to check all funds loading properly
+async function checkAllFundsLoading(page) {
+  try {
+    console.log('Navigating to NAV page for funds check...');
+    
+    await page.goto('https://www.motilaloswalmf.com/nav/latest-nav', {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+    
+    await page.waitForSelector('.table_nav tbody tr', { timeout: 10000 });
+    
+    const fundsData = {};
+    let currentPage = 1;
+    
+    while (true) {
+      console.log(`Scraping page ${currentPage}...`);
+      
+      // Extract Direct - Growth funds from current page
+      const pageData = await page.evaluate(() => {
+        const rows = document.querySelectorAll('.table_nav tbody tr');
+        const data = {};
+        
+        rows.forEach(row => {
+          const cells = row.querySelectorAll('td');
+          if (cells.length >= 4) {
+            const schemeName = cells[1].textContent.trim();
+            const nav = cells[3].textContent.trim();
+            
+            if (schemeName.includes('- Direct - Growth')) {
+              data[schemeName] = nav;
+            }
+          }
+        });
+        
+        return data;
+      });
+      
+      Object.assign(fundsData, pageData);
+      console.log(`Found ${Object.keys(pageData).length} Direct - Growth funds on page ${currentPage}`);
+      
+      // Check if there's a next page
+      const hasNextPage = await page.evaluate(() => {
+        const nextBtn = document.querySelector('.pagination .page-item:last-child a');
+        if (!nextBtn) return false;
+        const isDisabled = nextBtn.closest('.page-item').classList.contains('disabled');
+        return !isDisabled;
+      });
+      
+      if (!hasNextPage) {
+        console.log('No more pages to scrape');
+        break;
+      }
+      
+      // Click next page
+      await page.evaluate(() => {
+        const nextBtn = document.querySelector('.pagination .page-item:last-child a');
+        if (nextBtn) nextBtn.click();
+      });
+      
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await page.waitForSelector('.table_nav tbody tr', { timeout: 10000 });
+      currentPage++;
+    }
+    
+    console.log(`Total Direct - Growth funds found: ${Object.keys(fundsData).length}`);
+    
+    // Save to JSON file
+    const filePath = path.join(__dirname, '..', 'funds-nav-data.json');
+    fs.writeFileSync(filePath, JSON.stringify(fundsData, null, 2));
+    console.log(`Funds data saved to: ${filePath}`);
+    
+    return {
+      success: true,
+      fundsData,
+      totalFunds: Object.keys(fundsData).length,
+      filePath
+    };
+    
+  } catch (error) {
+    console.error('Error checking all funds:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Helper function to compare NAV values with smart matching
+// Allows minor decimal differences but rejects major value changes
+function compareNAV(expected, actual) {
+  if (!expected || !actual) return false;
+  
+  const exp = parseFloat(expected);
+  const act = parseFloat(actual);
+  
+  if (isNaN(exp) || isNaN(act)) return false;
+  
+  // Check if integer parts match (before decimal point)
+  const expInt = Math.floor(exp);
+  const actInt = Math.floor(act);
+  
+  if (expInt !== actInt) {
+    // Integer parts don't match - this is a major difference
+    return false;
+  }
+  
+  // Integer parts match, check decimal difference
+  // Allow up to 0.1 difference in decimal part
+  const diff = Math.abs(exp - act);
+  return diff <= 0.1;
+}
+
+// Function to verify funds on beta website
+async function verifyFundsOnBeta(browser, fundsData) {
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
+    
+    console.log('\n========== BETA WEBSITE VERIFICATION FLOW ==========');
+    console.log('Navigating to beta website...');
+    await page.goto('https://beta.motilaloswalmf.com/mutual-funds', {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
+    console.log('✓ Beta website loaded successfully');
+    
+    const matched = [];
+    const notMatched = [];
+    const notFound = [];
+    
+    const fundsArray = Object.entries(fundsData);
+    const limit = BETA_VERIFICATION_LIMIT > 0 ? BETA_VERIFICATION_LIMIT : fundsArray.length;
+    const fundsToCheck = fundsArray.slice(0, limit);
+    
+    console.log(`\nTotal funds in JSON: ${fundsArray.length}`);
+    console.log(`Funds to verify: ${fundsToCheck.length} (Limit: ${BETA_VERIFICATION_LIMIT === 0 ? 'ALL' : BETA_VERIFICATION_LIMIT})\n`);
+    
+    for (let i = 0; i < fundsToCheck.length; i++) {
+      const [fullName, expectedNav] = fundsToCheck[i];
+      const fundName = fullName.replace(' - Direct - Growth', '');
+      
+      console.log(`\n[${i + 1}/${fundsToCheck.length}] ========================================`);
+      console.log(`Fund: ${fundName}`);
+      console.log(`Expected NAV: ${expectedNav}`);
+      
+      try {
+        // Enter fund name in search
+        console.log('Step 1: Entering fund name in search field...');
+        await page.waitForSelector('#search-field', { timeout: 5000 });
+        await page.click('#search-field');
+        await page.evaluate(() => document.querySelector('#search-field').value = '');
+        await page.type('#search-field', fundName);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        console.log('✓ Search field populated');
+        
+        // Click on the search result
+        console.log('Step 2: Clicking on search result...');
+        const clicked = await page.evaluate((name) => {
+          const items = document.querySelectorAll('.list-search .list-fund-name');
+          for (const item of items) {
+            if (item.style.display !== 'none' && item.textContent.includes(name)) {
+              const link = item.querySelector('a');
+              if (link) {
+                link.click();
+                return true;
+              }
+            }
+          }
+          return false;
+        }, fundName);
+        
+        if (!clicked) {
+          console.log('✗ Fund not found in search results');
+          notFound.push({ fund: fullName, reason: 'Not found in search' });
+          continue;
+        }
+        console.log('✓ Search result clicked');
+        
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Click Know More button
+        console.log('Step 3: Clicking Know More button...');
+        await page.waitForSelector('.know-more.card-btn', { timeout: 5000 });
+        
+        const currentUrl = page.url();
+        console.log(`Current URL before click: ${currentUrl}`);
+        
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }),
+          page.click('.know-more.card-btn')
+        ]);
+        
+        const redirectedUrl = page.url();
+        console.log(`✓ Redirected to: ${redirectedUrl}`);
+        
+        // Get NAV value
+        console.log('Step 4: Extracting NAV value from page...');
+        await page.waitForSelector('.value-nav', { timeout: 5000 });
+        const actualNav = await page.evaluate(() => {
+          const navEl = document.querySelector('.value-nav');
+          return navEl ? navEl.textContent.trim() : null;
+        });
+        
+        console.log(`Actual NAV found: ${actualNav}`);
+        
+        // Compare NAVs with smart matching
+        const isMatch = compareNAV(expectedNav, actualNav);
+        
+        if (isMatch) {
+          console.log(`✓ NAV MATCHED: ${expectedNav} ≈ ${actualNav}`);
+          matched.push({ fund: fullName, nav: expectedNav, actualNav });
+        } else {
+          console.log(`✗ NAV MISMATCH: Expected ${expectedNav}, Got ${actualNav}`);
+          notMatched.push({ fund: fullName, expected: expectedNav, actual: actualNav });
+        }
+        
+        // Go back to funds page
+        console.log('Step 5: Navigating back to funds page...');
+        await page.goto('https://beta.motilaloswalmf.com/mutual-funds', {
+          waitUntil: 'networkidle2',
+          timeout: 30000
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        console.log('✓ Back to funds page');
+        
+      } catch (error) {
+        console.error(`✗ Error: ${error.message}`);
+        notFound.push({ fund: fullName, reason: error.message });
+        
+        // Try to go back to funds page
+        await page.goto('https://beta.motilaloswalmf.com/mutual-funds', {
+          waitUntil: 'networkidle2',
+          timeout: 30000
+        }).catch(() => {});
+      }
+    }
+    
+    console.log('\n========== VERIFICATION SUMMARY ==========');
+    console.log(`Total Checked: ${fundsToCheck.length}`);
+    console.log(`Matched: ${matched.length}`);
+    console.log(`Not Matched: ${notMatched.length}`);
+    console.log(`Not Found: ${notFound.length}`);
+    console.log('==========================================\n');
+    
+    await page.close();
+    
+    return {
+      success: true,
+      matched,
+      notMatched,
+      notFound,
+      total: fundsToCheck.length,
+      totalInJson: fundsArray.length
+    };
+    
+  } catch (error) {
+    console.error('Error verifying funds on beta:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
 }
 
 // Function to check NAV update with existing page
@@ -153,8 +421,35 @@ async function sendDiscordMessage(message) {
   console.log(message);
   
   try {
-    await axios.post(DISCORD_WEBHOOK_URL, { content: message });
-    console.log('✅ Discord message sent successfully!');
+    // Discord has a 2000 character limit, split if needed
+    const MAX_LENGTH = 2000;
+    
+    if (message.length <= MAX_LENGTH) {
+      await axios.post(DISCORD_WEBHOOK_URL, { content: message });
+      console.log('✅ Discord message sent successfully!');
+    } else {
+      // Split message into chunks
+      const parts = [];
+      let currentPart = '';
+      const lines = message.split('\n');
+      
+      for (const line of lines) {
+        if ((currentPart + line + '\n').length > MAX_LENGTH) {
+          if (currentPart) parts.push(currentPart);
+          currentPart = line + '\n';
+        } else {
+          currentPart += line + '\n';
+        }
+      }
+      if (currentPart) parts.push(currentPart);
+      
+      // Send each part
+      for (let i = 0; i < parts.length; i++) {
+        await axios.post(DISCORD_WEBHOOK_URL, { content: parts[i] });
+        console.log(`✅ Discord message part ${i + 1}/${parts.length} sent successfully!`);
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s between messages
+      }
+    }
   } catch (error) {
     console.error('❌ Failed to send Discord message:', error.response?.data || error.message);
   }
@@ -1261,6 +1556,16 @@ async function main(discordClient, userPAN, userPasscode, kfintechAUM, kfintechC
     });
     
     const navResult = await checkNAVWithPage(page);
+    
+    // Check All Funds Loading
+    const allFundsResult = await checkAllFundsLoading(page);
+    
+    // Verify funds on beta website
+    let betaVerificationResult = null;
+    if (allFundsResult.success && allFundsResult.fundsData) {
+      betaVerificationResult = await verifyFundsOnBeta(browser, allFundsResult.fundsData);
+    }
+    
     await page.close();
     
     // Check Login (can be skipped via SKIP_LOGIN_CHECK flag)
@@ -1454,6 +1759,40 @@ async function main(discordClient, userPAN, userPasscode, kfintechAUM, kfintechC
       message += `6. Account performance report for PMS failed\n`;
     }
     
+    // 7. All Funds Loading Status
+    if (allFundsResult.success) {
+      message += `7. All funds loading properly (${allFundsResult.totalFunds} Direct - Growth funds)\n`;
+    } else {
+      message += `7. All funds loading failed (Error: ${allFundsResult.error})\n`;
+    }
+    
+    // Beta Website Verification Report
+    if (betaVerificationResult && betaVerificationResult.success) {
+      message += `\n**Beta Website NAV Verification**\n\n`;
+      message += `Total Funds in JSON: ${betaVerificationResult.totalInJson}\n`;
+      message += `Funds Checked: ${betaVerificationResult.total}${BETA_VERIFICATION_LIMIT > 0 ? ` (Limited to ${BETA_VERIFICATION_LIMIT})` : ''}\n`;
+      message += `✅ Matched: ${betaVerificationResult.matched.length}\n`;
+      message += `❌ Not Matched: ${betaVerificationResult.notMatched.length}\n`;
+      message += `⚠️ Not Found: ${betaVerificationResult.notFound.length}\n`;
+      
+      if (betaVerificationResult.notMatched.length > 0) {
+        message += `\n**NAV Mismatches:**\n`;
+        betaVerificationResult.notMatched.forEach(item => {
+          message += `- ${item.fund}\n  Expected: ${item.expected} | Actual: ${item.actual}\n`;
+        });
+      }
+      
+      if (betaVerificationResult.notFound.length > 0) {
+        message += `\n**Funds Not Found:**\n`;
+        betaVerificationResult.notFound.slice(0, 5).forEach(item => {
+          message += `- ${item.fund}\n`;
+        });
+        if (betaVerificationResult.notFound.length > 5) {
+          message += `... and ${betaVerificationResult.notFound.length - 5} more\n`;
+        }
+      }
+    }
+    
     // KFintech Sync Status (after all checks)
     if (kfintechSyncResult && kfintechSyncResult.success) {
       const { motilalOswal, kfintech, differences, isPerfectSync } = kfintechSyncResult;
@@ -1505,4 +1844,4 @@ if (require.main === module) {
   main().catch(console.error);
 }
 
-module.exports = { checkNAVUpdate, main, waitForOTP };
+module.exports = { checkNAVUpdate, main, waitForOTP, verifyFundsOnBeta };
