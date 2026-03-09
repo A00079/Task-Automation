@@ -426,17 +426,35 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     await correctButton.click();
     console.log('Submit button clicked, waiting for response...');
     
-    // Wait for either URL change or error message to appear
-    await Promise.race([
-      page.waitForFunction(
-        () => window.location.href.includes('/passcode') || 
-              document.querySelector('.error-message')?.textContent.trim(),
-        { timeout: 20000 }
-      ),
-      new Promise(resolve => setTimeout(resolve, 20000))
-    ]);
+    // Wait longer for slow networks - 5 seconds initial wait
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
-    // Check for error messages first
+    // Check current state
+    let currentUrl = page.url();
+    console.log(`URL after 5s wait: ${currentUrl}`);
+    
+    // If already on passcode page, continue
+    if (currentUrl.includes('/passcode')) {
+      console.log('Already on passcode page!');
+    } else {
+      // Wait up to 60 seconds for slow networks
+      console.log('Waiting for navigation or error (up to 60s for slow networks)...');
+      
+      try {
+        await page.waitForFunction(
+          () => window.location.href.includes('/passcode') || 
+                document.querySelector('.error-message')?.textContent.trim(),
+          { timeout: 60000 }
+        );
+      } catch (e) {
+        console.log('Wait function timed out after 60s, checking page state...');
+      }
+      
+      currentUrl = page.url();
+      console.log(`URL after waitForFunction: ${currentUrl}`);
+    }
+    
+    // Check for error messages
     const errorMsg = await page.evaluate(() => {
       const errorElements = document.querySelectorAll('.error-message, .Mui-error, [role="alert"]');
       for (const el of errorElements) {
@@ -452,27 +470,33 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
       throw new Error(`OTP submission failed: ${errorMsg}`);
     }
     
-    // Check current URL
-    let currentUrl = page.url();
-    console.log(`Current URL after submit: ${currentUrl}`);
-    
-    // If not on passcode page yet, wait longer
+    // If not on passcode page yet, try waiting for navigation one more time
     if (!currentUrl.includes('/passcode')) {
-      console.log('Not on passcode page yet, waiting longer...');
+      console.log('Not on passcode page yet, trying navigation wait (20s)...');
       
-      // Try waiting for navigation one more time
       await page.waitForNavigation({ 
         waitUntil: 'domcontentloaded', 
-        timeout: 15000 
-      }).catch(() => console.log('Final navigation wait timed out'));
+        timeout: 20000 
+      }).catch(() => console.log('Navigation wait timed out'));
       
       currentUrl = page.url();
-      console.log(`URL after extended wait: ${currentUrl}`);
+      console.log(`URL after navigation wait: ${currentUrl}`);
     }
 
     if (!currentUrl.includes('/passcode')) {
       // Take screenshot for debugging
       await page.screenshot({ path: '/tmp/otp-submit-failed.png' });
+      
+      // Get page content for debugging
+      const pageContent = await page.evaluate(() => {
+        return {
+          hasOtpField: !!document.querySelector('input[name="otp"]'),
+          hasPasscodeField: !!document.querySelector('input[type="password"]'),
+          bodyText: document.body.innerText.substring(0, 500)
+        };
+      });
+      console.log('Page content:', pageContent);
+      
       throw new Error(`Failed to reach passcode page after OTP submit. Current URL: ${currentUrl}. Check /tmp/otp-submit-failed.png`);
     }
     

@@ -118,5 +118,10 @@ client.on('messageCreate', async (message) => {
 
 client.login(DISCORD_BOT_TOKEN).catch(error => {
   console.error('Failed to login to Discord:', error.message);
+  console.error('Full error:', error);
+  console.error('\nTroubleshooting:');
+  console.error('1. Check if Discord is blocked by corporate firewall/proxy');
+  console.error('2. Verify DISCORD_BOT_TOKEN is correct in .env file');
+  console.error('3. Try running: npm run start:dev');
   process.exit(1);
 });
