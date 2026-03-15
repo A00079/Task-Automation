@@ -23,9 +23,9 @@ const PMS_PASSWORD = 'Mosl@2026';
 const PMS_PAN = 'AINPB3346D';
 
 // Feature Flags
-const SKIP_LOGIN_CHECK = true; // Set to false to enable login check
-const SKIP_PMS_DASHBOARD_CHECK = true; // Set to false to enable PMS dashboard check
-const SKIP_MF_ACCOUNT_STATEMENT_CHECK = true; // Set to false to enable MF account statement check
+const SKIP_LOGIN_CHECK = false; // Set to false to enable login check
+const SKIP_PMS_DASHBOARD_CHECK = false; // Set to false to enable PMS dashboard check
+const SKIP_MF_ACCOUNT_STATEMENT_CHECK = false; // Set to false to enable MF account statement check
 const BETA_VERIFICATION_LIMIT = 5; // Set to 0 for all funds, or a number like 5 to test only 5 funds
 
 // Stealth Helper: Random delay between min and max milliseconds
@@ -515,459 +515,190 @@ async function waitForKFintechValues(existingClient) {
 async function checkLogin(browser, discordClient, panNumber, passcode) {
   try {
     const page = await browser.newPage();
-    
-    // Set realistic viewport
     await page.setViewport({ width: 1920, height: 1080 });
-    
-    // Set realistic user agent
     await page.setUserAgent(
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
-    
-    // Make Puppeteer undetectable
     await page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
       window.navigator.chrome = { runtime: {} };
       Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
       Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
     });
-    
-    console.log('Navigating to login page...');
-    
-    await page.goto('https://www.motilaloswalmf.com/mutualfund/login', {
+
+    // ── STEP 1: Enter PAN and click Authenticate ─────────────────────────────
+    console.log('Navigating to beta login page...');
+    await page.goto('https://beta.motilaloswalmf.com/login-page', {
       waitUntil: 'networkidle2',
       timeout: 30000
     });
 
-    // Enter PAN using setReactValue with human-like delay
-    await page.waitForSelector('input[name="panNo"]', { timeout: 10000 });
-    await humanWait(500, 1500);
-    
-    // Try setReactValue first
-    try {
-      await setReactValue(page, 'input[name="panNo"]', panNumber);
-      console.log('PAN entered using setReactValue');
-    } catch (e) {
-      console.log('setReactValue failed, using type method:', e.message);
-      await page.click('input[name="panNo"]');
-      await page.type('input[name="panNo"]', panNumber);
-      console.log('PAN entered using type method');
-    }
-    
-    await humanWait(1500, 2500);
-    
-    // Verify PAN was entered
-    const panValue = await page.$eval('input[name="panNo"]', el => el.value);
-    console.log(`PAN field value: "${panValue}"`);
-    
-    if (panValue !== panNumber) {
-      console.log('PAN value mismatch, retrying with type method...');
-      await page.click('input[name="panNo"]', { clickCount: 3 });
-      await page.keyboard.press('Backspace');
-      await page.type('input[name="panNo"]', panNumber);
-      await humanWait(1000, 1500);
-    }
+    await page.waitForSelector('#login-pan-input', { timeout: 10000 });
+    await humanWait(500, 1000);
+    await page.click('#login-pan-input');
+    await page.type('#login-pan-input', panNumber);
+    console.log(`PAN entered: ${panNumber}`);
 
-    // Click Authenticate with human-like delay
     await humanWait(800, 1500);
+
+    // Wait for Authenticate button to become enabled (removes is-disabled class)
+    await page.waitForFunction(
+      () => {
+        const btn = document.querySelector('p.auth.btn');
+        return btn && !btn.classList.contains('is-disabled');
+      },
+      { timeout: 10000 }
+    );
+
     console.log('Clicking Authenticate button...');
-    
-    // Try multiple methods to click the button
-    try {
-      // Method 1: Direct click
-      await page.click('button.yg_submitBtn');
-    } catch (e) {
-      console.log('Direct click failed, trying evaluate click...');
-      // Method 2: JavaScript click
-      await page.evaluate(() => {
-        const btn = document.querySelector('button.yg_submitBtn');
-        if (btn) btn.click();
-      });
-    }
-    
-    console.log('Authenticate button clicked, waiting for OTP field...');
-    
-    // Wait for either OTP field or navigation
-    await Promise.race([
-      page.waitForSelector('input[name="otp"]', { timeout: 15000 }).catch(() => {}),
-      page.waitForNavigation({ timeout: 15000 }).catch(() => {}),
-      new Promise(resolve => setTimeout(resolve, 10000))
-    ]);
-    
-    // Check if OTP field appeared or if there's an error
-    const pageState = await page.evaluate(() => {
-      const otpField = document.querySelector('input[name="otp"]');
-      const errorElements = document.querySelectorAll('.error-message, .Mui-error, [role="alert"]');
-      let errorMsg = null;
-      
-      for (const el of errorElements) {
-        const text = el.textContent.trim();
-        if (text && text !== 'Enter PAN number' && text !== '') {
-          errorMsg = text;
-          break;
-        }
-      }
-      
-      // Check if button is still there (form didn't submit)
-      const authButton = document.querySelector('button.yg_submitBtn');
-      const buttonText = authButton ? authButton.textContent.trim() : null;
-      
-      return {
-        hasOtpField: !!otpField,
-        errorMessage: errorMsg,
-        currentUrl: window.location.href,
-        buttonStillPresent: !!authButton,
-        buttonText: buttonText
-      };
-    });
-    
-    console.log('Page state after Authenticate:', pageState);
-    
-    if (pageState.errorMessage) {
-      throw new Error(`Authentication failed: ${pageState.errorMessage}`);
-    }
-    
-    // If button is still present, form didn't submit - try pressing Enter
-    if (pageState.buttonStillPresent && !pageState.hasOtpField) {
-      console.log('Form did not submit, trying Enter key...');
-      await page.focus('input[name="panNo"]');
-      await page.keyboard.press('Enter');
-      await humanWait(8000, 10000);
-      
-      const otpFieldExists = await page.$('input[name="otp"]');
-      if (!otpFieldExists) {
-        // Take screenshot for debugging
-        await page.screenshot({ path: '/tmp/no-otp-field.png' });
-        const html = await page.content();
-        require('fs').writeFileSync('/tmp/no-otp-field.html', html);
-        throw new Error('OTP field did not appear. PAN might be invalid or website changed. Check /tmp/no-otp-field.png');
-      }
-    } else if (!pageState.hasOtpField) {
-      // Take screenshot for debugging
-      await page.screenshot({ path: '/tmp/no-otp-field.png' });
-      
-      // Wait a bit more
-      console.log('OTP field not found, waiting additional time...');
-      await humanWait(5000, 7000);
-      
-      const otpFieldExists = await page.$('input[name="otp"]');
-      if (!otpFieldExists) {
-        const html = await page.content();
-        require('fs').writeFileSync('/tmp/no-otp-field.html', html);
-        throw new Error('OTP field did not appear. PAN might be invalid or website changed. Check /tmp/no-otp-field.png');
-      }
-    }
-    
-    // Send Discord message for OTP
-    await sendDiscordMessage('⏳ **Waiting for OTP**\n\nPlease reply with the 6-digit OTP you received.');
-
-    // Wait for OTP from Discord
-    console.log('Waiting for OTP from Discord...');
-    const otp = await waitForOTP(discordClient);
-    console.log(`Got OTP: ${otp}, now entering it...`);
-
-    // Enter OTP using setReactValue to ensure React state updates
-    await page.waitForSelector('input[name="otp"]', { timeout: 10000 });
-    
-    // Clear any existing value first
     await page.evaluate(() => {
-      const otpInput = document.querySelector('input[name="otp"]');
-      if (otpInput) otpInput.value = '';
+      const btn = document.querySelector('p.auth.btn');
+      if (btn) btn.click();
     });
-    
-    // Use setReactValue for React-controlled input with human-like delay
+
+    // ── STEP 2: Wait for OTP inputs and enter OTP ────────────────────────────
+    console.log('Waiting for OTP inputs...');
+    await page.waitForSelector('.otp-input', { timeout: 20000 });
+    console.log('OTP inputs appeared');
+
+    await sendDiscordMessage('⏳ **Waiting for OTP**\n\nPlease reply with the 6-digit OTP you received.');
+    const otp = await waitForOTP(discordClient);
+    console.log(`Got OTP: ${otp}, entering...`);
+
+    await humanWait(500, 1000);
+    const otpInputs = await page.$$('.otp-input');
+    for (let i = 0; i < otp.length && i < otpInputs.length; i++) {
+      await otpInputs[i].click();
+      await otpInputs[i].type(otp[i]);
+      await new Promise(resolve => setTimeout(resolve, randomDelay(80, 150)));
+    }
+    console.log('OTP entered');
+
+    await humanWait(500, 1000);
+
+    // Click Submit button (inside .kycblock)
+    console.log('Clicking Submit button...');
+    await page.evaluate(() => {
+      const btn = document.querySelector('.kycblock ~ .btn-descr p.auth.btn, .btn-descr p.auth.btn');
+      if (btn) btn.click();
+    });
+
+    // ── STEP 3: Wait for passcode inputs and enter passcode ──────────────────
+    console.log('Waiting for passcode inputs...');
+    await page.waitForSelector('#pass-label1', { timeout: 30000 });
+    console.log('Passcode inputs appeared');
+
     await humanWait(800, 1500);
-    await setReactValue(page, 'input[name="otp"]', otp);
-    console.log('OTP entered using setReactValue');
-    await humanWait(2500, 3500);
-    
-    // Verify OTP was entered
-    const otpValue = await page.$eval('input[name="otp"]', el => el.value);
-    console.log(`OTP field value after entry: "${otpValue}"`);
-    
-    if (otpValue !== otp) {
-      console.log('OTP value mismatch, trying direct type method...');
-      await page.click('input[name="otp"]');
-      await page.keyboard.type(otp);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-
-    // Click Submit button (NOT the Resend OTP button)
-    console.log('Clicking OTP submit button...');
-    const submitButtons = await page.$$('button.yg_submitBtn');
-    console.log(`Found ${submitButtons.length} submit buttons`);
-    
-    // Find the correct Submit button (not the Resend OTP one)
-    let correctButton = null;
-    for (const btn of submitButtons) {
-      const btnText = await page.evaluate(el => el.textContent.trim(), btn);
-      const btnClass = await page.evaluate(el => el.className, btn);
-      console.log(`Button: "${btnText}" - Class: "${btnClass}"`);
-      
-      if (btnText.toLowerCase().includes('submit') && !btnClass.includes('yg_resendOTPBtn')) {
-        correctButton = btn;
-        break;
-      }
-    }
-    
-    if (!correctButton) {
-      throw new Error('Could not find Submit button');
-    }
-    
-    console.log('Clicking the correct Submit button...');
-    await humanWait(500, 1200);
-    
-    // Click and wait for either navigation or error message
-    await correctButton.click();
-    console.log('Submit button clicked, waiting for response...');
-    
-    // Wait longer for slow networks - 5 seconds initial wait
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    // Check current state
-    let currentUrl = page.url();
-    console.log(`URL after 5s wait: ${currentUrl}`);
-    
-    // If already on passcode page, continue
-    if (currentUrl.includes('/passcode')) {
-      console.log('Already on passcode page!');
-    } else {
-      // Wait up to 60 seconds for slow networks
-      console.log('Waiting for navigation or error (up to 60s for slow networks)...');
-      
-      try {
-        await page.waitForFunction(
-          () => window.location.href.includes('/passcode') || 
-                document.querySelector('.error-message')?.textContent.trim(),
-          { timeout: 60000 }
-        );
-      } catch (e) {
-        console.log('Wait function timed out after 60s, checking page state...');
-      }
-      
-      currentUrl = page.url();
-      console.log(`URL after waitForFunction: ${currentUrl}`);
-    }
-    
-    // Check for error messages
-    const errorMsg = await page.evaluate(() => {
-      const errorElements = document.querySelectorAll('.error-message, .Mui-error, [role="alert"]');
-      for (const el of errorElements) {
-        const text = el.textContent.trim();
-        if (text && text !== 'Please enter OTP' && text !== 'Enter PAN number' && text !== '') {
-          return text;
-        }
-      }
-      return null;
-    });
-    
-    if (errorMsg) {
-      throw new Error(`OTP submission failed: ${errorMsg}`);
-    }
-    
-    // If not on passcode page yet, try waiting for navigation one more time
-    if (!currentUrl.includes('/passcode')) {
-      console.log('Not on passcode page yet, trying navigation wait (20s)...');
-      
-      await page.waitForNavigation({ 
-        waitUntil: 'domcontentloaded', 
-        timeout: 20000 
-      }).catch(() => console.log('Navigation wait timed out'));
-      
-      currentUrl = page.url();
-      console.log(`URL after navigation wait: ${currentUrl}`);
-    }
-
-    if (!currentUrl.includes('/passcode')) {
-      // Take screenshot for debugging
-      await page.screenshot({ path: '/tmp/otp-submit-failed.png' });
-      
-      // Get page content for debugging
-      const pageContent = await page.evaluate(() => {
-        return {
-          hasOtpField: !!document.querySelector('input[name="otp"]'),
-          hasPasscodeField: !!document.querySelector('input[type="password"]'),
-          bodyText: document.body.innerText.substring(0, 500)
-        };
-      });
-      console.log('Page content:', pageContent);
-      
-      throw new Error(`Failed to reach passcode page after OTP submit. Current URL: ${currentUrl}. Check /tmp/otp-submit-failed.png`);
-    }
-    
-    console.log('Successfully reached passcode page!');
-
-    // Enter Passcode with human-like typing
-    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
-    await humanWait(1500, 2500);
-    const passcodeInputs = await page.$$('input[type="password"]');
-    for (let i = 0; i < passcode.length; i++) {
-      await passcodeInputs[i].type(passcode[i]);
-      await new Promise(resolve => setTimeout(resolve, randomDelay(100, 250)));
+    const passcodeIds = ['#pass-label1', '#pass-label2', '#pass-label3', '#pass-label4'];
+    for (let i = 0; i < passcode.length && i < passcodeIds.length; i++) {
+      await page.click(passcodeIds[i]);
+      await page.type(passcodeIds[i], passcode[i]);
+      await new Promise(resolve => setTimeout(resolve, randomDelay(80, 150)));
     }
     console.log('Passcode entered');
-    await humanWait(1500, 2500);
 
-    // Toggle "Discover the New Experience" switch to ON
-    console.log('Checking toggle switch...');
-    const toggleSwitch = await page.$('input.MuiSwitch-input[type="checkbox"]');
-    if (toggleSwitch) {
-      const isChecked = await page.evaluate(el => el.checked, toggleSwitch);
-      console.log(`Toggle is currently: ${isChecked ? 'ON' : 'OFF'}`);
-      
-      if (!isChecked) {
-        console.log('Turning toggle ON...');
-        await toggleSwitch.click();
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-    } else {
-      console.log('Toggle switch not found');
-    }
+    await humanWait(500, 1000);
 
-    // Click Submit button on passcode page
-    console.log('Clicking passcode submit button...');
-    const passcodeSubmitBtn = await page.$('button.btnsubmit');
-    if (!passcodeSubmitBtn) {
-      console.log('btnsubmit not found, trying yg_submitBtn');
-      await page.click('button.yg_submitBtn');
-    } else {
-      await passcodeSubmitBtn.click();
-    }
-    console.log('Submit button clicked, waiting for dashboard...');
-    
-    // Check for any error messages immediately after click
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const passcodeError = await page.evaluate(() => {
-      const errorElements = document.querySelectorAll('.error-message, .Mui-error, [role="alert"]');
-      for (const el of errorElements) {
-        const text = el.textContent.trim();
-        if (text && text !== 'Please enter OTP' && text !== 'Enter PAN number') {
-          return text;
+    // Click Continue button - find the one with exact 'Continue' text
+    console.log('Clicking Continue button...');
+    const continueClicked = await page.evaluate(() => {
+      const allBtns = document.querySelectorAll('p.auth.btn');
+      for (const btn of allBtns) {
+        if (btn.textContent.trim() === 'Continue') {
+          console.log('Found Continue button, clicking...');
+          btn.click();
+          return true;
         }
       }
-      return null;
+      return false;
     });
-    
-    if (passcodeError) {
-      throw new Error(`Passcode submission failed: ${passcodeError}`);
-    }
-    
-    // Wait for navigation to dashboard (different domain)
-    await Promise.race([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => console.log('Navigation timeout')),
-      new Promise(resolve => setTimeout(resolve, 12000))
-    ]);
-    console.log('First navigation completed');
-    
-    // Wait for SSO redirect to complete
+    console.log(`Continue button clicked: ${continueClicked}`);
+    if (!continueClicked) throw new Error('Continue button not found or text mismatch');
+
+    // ── STEP 4: Wait for cross-domain redirect to invest.motilaloswalmf.com ────────────
+    console.log('Waiting for cross-domain redirect to invest dashboard...');
+
+    // Use framenavigated event - waitForFunction breaks on cross-domain navigation
+    await new Promise((resolve) => {
+      const onNav = (frame) => {
+        if (frame === page.mainFrame()) {
+          const url = frame.url();
+          console.log(`Navigation detected: ${url}`);
+          if (!url.includes('login-page')) {
+            page.off('framenavigated', onNav);
+            resolve();
+          }
+        }
+      };
+      page.on('framenavigated', onNav);
+      setTimeout(() => { page.off('framenavigated', onNav); resolve(); }, 60000);
+    });
+
     let finalUrl = page.url();
-    console.log(`Current URL: ${finalUrl}`);
-    
-    // If still on passcode page, there's an issue
-    if (finalUrl.includes('/passcode')) {
-      await page.screenshot({ path: '/tmp/passcode-stuck.png' });
-      throw new Error('Still on passcode page after submit - passcode might be incorrect');
-    }
-    
-    if (finalUrl.includes('/sso')) {
-      console.log('On SSO page, waiting for final redirect...');
-      await Promise.race([
-        page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 20000 }).catch(() => console.log('SSO redirect timeout')),
-        new Promise(resolve => setTimeout(resolve, 15000))
-      ]);
-      finalUrl = page.url();
-      console.log(`Final URL after SSO: ${finalUrl}`);
+    console.log(`URL after redirect: ${finalUrl}`);
+
+    // Wait for page to fully settle
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {}),
+      new Promise(resolve => setTimeout(resolve, 8000))
+    ]);
+
+    finalUrl = page.url();
+    console.log(`Final settled URL: ${finalUrl}`);
+
+    // Extra buffer for React to render
+    await new Promise(resolve => setTimeout(resolve, 4000));
+
+    if (finalUrl.includes('login-page')) {
+      throw new Error(`Still on login-page after passcode submit. URL: ${finalUrl}`);
     }
 
-    // Wait for page to fully load
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Check if reached dashboard - look for welcome message
-    console.log('Looking for username on dashboard...');
-    
-    // Try to find username on dashboard with investments
-    const userName = await page.evaluate(() => {
-      // Try new dashboard with investments - Welcome, USER NAME format
-      const welcomeText = document.querySelector('p.MuiTypography-root.css-ljufra');
-      if (welcomeText) {
-        const nameSpan = welcomeText.querySelector('span.MuiBox-root.css-y13svj');
-        if (nameSpan) {
-          return nameSpan.textContent.trim();
-        }
+    // Extract username from dashboard
+    const dashboardData = await page.evaluate(() => {
+      // Check for 'Welcome,' text (no-investment new user dashboard)
+      const welcomeEl = document.querySelector('p.css-10y7qtq');
+      const nameEl = document.querySelector('p.css-nhob99');
+      if (welcomeEl && welcomeEl.textContent.trim() === 'Welcome,') {
+        const name = nameEl ? nameEl.textContent.trim() : '';
+        return { userName: 'Welcome, ' + name, isNewUser: true };
       }
-      
-      // Fallback: Try old dashboard format
-      const newDash = document.querySelector('.css-nhob99');
-      if (newDash) return newDash.textContent.trim();
-      
-      const oldDash = document.querySelector('.zeroBalanceText h3');
-      if (oldDash) return oldDash.textContent.trim();
-      
-      const portfolio = document.querySelector('.css-ljufra');
-      if (portfolio) return portfolio.textContent.trim();
-      
-      return null;
+
+      // Existing investor dashboard selectors
+      for (const sel of ['.user-pan-para', '.css-nhob99', '.zeroBalanceText h3']) {
+        const el = document.querySelector(sel);
+        if (el && el.textContent.trim()) return { userName: el.textContent.trim(), isNewUser: false };
+      }
+      for (const el of document.querySelectorAll('p, h1, h2, h3, span')) {
+        if (el.textContent.trim().startsWith('Welcome')) return { userName: el.textContent.trim(), isNewUser: false };
+      }
+      return { userName: null, isNewUser: false };
     });
-    
-    if (userName) {
-      console.log(`Login successful: ${userName}`);
-      
-      // Extract Current Value and Total Investment from dashboard
-      const portfolioData = await page.evaluate(() => {
-        // Try multiple selectors for Current Value
-        let currentValue = null;
-        let totalInvestment = null;
-        
-        // Method 1: Direct class selector
-        const cvEl1 = document.querySelector('p.css-1pjxbyt');
-        if (cvEl1) {
-          const text = cvEl1.textContent.replace(/₹|,|\s/g, '');
-          currentValue = parseFloat(text);
-        }
-        
-        // Method 2: Find by text content
-        if (!currentValue) {
-          const allP = Array.from(document.querySelectorAll('p'));
-          for (const p of allP) {
-            const prevP = p.previousElementSibling;
-            if (prevP && prevP.textContent.includes('Current Value')) {
-              const text = p.textContent.replace(/₹|,|\s/g, '');
-              currentValue = parseFloat(text);
-              break;
-            }
-          }
-        }
-        
-        // Method 1 for Total Investment: Direct class selector
-        const tiEl1 = document.querySelector('p.css-wu85w4');
-        if (tiEl1) {
-          const text = tiEl1.textContent.replace(/₹|,|\s/g, '');
-          totalInvestment = parseFloat(text);
-        }
-        
-        // Method 2: Find by text content
-        if (!totalInvestment) {
-          const allP = Array.from(document.querySelectorAll('p'));
-          for (const p of allP) {
-            const prevP = p.previousElementSibling;
-            if (prevP && prevP.textContent.includes('Total Investment')) {
-              const text = p.textContent.replace(/₹|,|\s/g, '');
-              totalInvestment = parseFloat(text);
-              break;
-            }
-          }
-        }
-        
-        return { currentValue, totalInvestment };
-      });
-      
-      console.log('Portfolio data extracted:', portfolioData);
+
+    const { userName, isNewUser } = dashboardData;
+
+    if (isNewUser) {
+      console.log(`New user with no investments. URL: ${finalUrl}, User: ${userName}`);
       await page.close();
-      return { success: true, userName, portfolioData };
-    } else {
-      throw new Error('Reached dashboard but could not find username');
+      return { success: true, userName, portfolioData: { currentValue: null, totalInvestment: null }, isNewUser: true };
     }
 
+    console.log(`Login successful. URL: ${finalUrl}, User: ${userName || 'not found'}`);
+
+    const portfolioData = await page.evaluate(() => {
+      let currentValue = null, totalInvestment = null;
+      const allP = Array.from(document.querySelectorAll('p'));
+      for (const p of allP) {
+        const prev = p.previousElementSibling;
+        if (!prev) continue;
+        const text = p.textContent.replace(/₹|,|\s/g, '');
+        if (prev.textContent.includes('Current Value')) currentValue = parseFloat(text);
+        if (prev.textContent.includes('Total Investment')) totalInvestment = parseFloat(text);
+      }
+      return { currentValue, totalInvestment };
+    });
+    console.log('Portfolio data:', portfolioData);
+    await page.close();
+    return { success: true, userName: userName || finalUrl, portfolioData };
   } catch (error) {
     console.error('Login check failed:', error.message);
     return { success: false, error: error.message };
@@ -1737,7 +1468,9 @@ async function main(discordClient, userPAN, userPasscode, kfintechAUM, kfintechC
     }
     
     // 2. Login Status
-    if (loginResult.success && !loginResult.skipped) {
+    if (loginResult.success && !loginResult.skipped && loginResult.isNewUser) {
+      message += `2. Login working properly (New user with no investments)\n`;
+    } else if (loginResult.success && !loginResult.skipped) {
       message += `2. Login working properly\n`;
     } else if (loginResult.skipped) {
       message += `2. Login check skipped\n`;
