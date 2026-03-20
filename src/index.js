@@ -100,7 +100,7 @@ client.on('messageCreate', async (message) => {
     }
     
     // Handle wake up command
-    if (content.toLowerCase() === 'jarvis wake up') {
+    if (content.toLowerCase() === 'jarvis start') {
       if (isRunning) {
         console.log('Already running, ignoring duplicate command');
         return;

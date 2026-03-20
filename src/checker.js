@@ -613,13 +613,15 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     // ── STEP 4: Wait for cross-domain redirect to invest.motilaloswalmf.com ────────────
     console.log('Waiting for cross-domain redirect to invest dashboard...');
 
-    // Use framenavigated event - waitForFunction breaks on cross-domain navigation
+    // Wait for the full redirect chain: beta → /sso?ctx=... → invest.motilaloswalmf.com/
+    // framenavigated fires on every hop; we wait until we land on the final invest dashboard
     await new Promise((resolve) => {
       const onNav = (frame) => {
         if (frame === page.mainFrame()) {
           const url = frame.url();
           console.log(`Navigation detected: ${url}`);
-          if (!url.includes('login-page')) {
+          // Resolve only when we reach the final invest dashboard (not SSO, not login-page)
+          if (url.startsWith('https://invest.motilaloswalmf.com/') && !url.includes('/sso')) {
             page.off('framenavigated', onNav);
             resolve();
           }
@@ -630,67 +632,66 @@ async function checkLogin(browser, discordClient, panNumber, passcode) {
     });
 
     let finalUrl = page.url();
-    console.log(`URL after redirect: ${finalUrl}`);
-
-    // Wait for page to fully settle
-    await Promise.race([
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(() => {}),
-      new Promise(resolve => setTimeout(resolve, 8000))
-    ]);
-
-    finalUrl = page.url();
     console.log(`Final settled URL: ${finalUrl}`);
 
     // Extra buffer for React to render
-    await new Promise(resolve => setTimeout(resolve, 4000));
+    await new Promise(resolve => setTimeout(resolve, 5000));
 
     if (finalUrl.includes('login-page')) {
       throw new Error(`Still on login-page after passcode submit. URL: ${finalUrl}`);
     }
 
-    // Extract username from dashboard
+    // Wait for dashboard to fully render (handles slow networks)
+    console.log('Waiting for dashboard content to render...');
+    await Promise.race([
+      page.waitForSelector('p.css-ljufra, p.css-10y7qtq', { timeout: 30000 }).catch(() => {}),
+      new Promise(resolve => setTimeout(resolve, 30000))
+    ]);
+
+    // Extract username and portfolio from dashboard
     const dashboardData = await page.evaluate(() => {
-      // Check for 'Welcome,' text (no-investment new user dashboard)
-      const welcomeEl = document.querySelector('p.css-10y7qtq');
-      const nameEl = document.querySelector('p.css-nhob99');
-      if (welcomeEl && welcomeEl.textContent.trim() === 'Welcome,') {
-        const name = nameEl ? nameEl.textContent.trim() : '';
-        return { userName: 'Welcome, ' + name, isNewUser: true };
+      // ── Existing investor dashboard (invest.motilaloswalmf.com) ──
+      // Username: p.css-ljufra > span.css-y13svj
+      const welcomeEl = document.querySelector('p.css-ljufra');
+      if (welcomeEl) {
+        const nameSpan = welcomeEl.querySelector('span.css-y13svj');
+        const userName = nameSpan ? 'Welcome, ' + nameSpan.textContent.trim() : welcomeEl.textContent.trim();
+
+        // Current Value: p.css-1pjxbyt, Total Investment: p.css-wu85w4
+        const cvEl = document.querySelector('p.css-1pjxbyt');
+        const tiEl = document.querySelector('p.css-wu85w4');
+        const currentValue = cvEl ? parseFloat(cvEl.textContent.replace(/[^\d.]/g, '')) : null;
+        const totalInvestment = tiEl ? parseFloat(tiEl.textContent.replace(/[^\d.]/g, '')) : null;
+        return { userName, currentValue, totalInvestment, isNewUser: false };
       }
 
-      // Existing investor dashboard selectors
-      for (const sel of ['.user-pan-para', '.css-nhob99', '.zeroBalanceText h3']) {
-        const el = document.querySelector(sel);
-        if (el && el.textContent.trim()) return { userName: el.textContent.trim(), isNewUser: false };
+      // ── New user dashboard (no investments) ──
+      const newUserEl = document.querySelector('p.css-10y7qtq');
+      if (newUserEl && newUserEl.textContent.trim() === 'Welcome,') {
+        const nameEl = document.querySelector('p.css-nhob99');
+        const name = nameEl ? nameEl.textContent.trim() : '';
+        return { userName: 'Welcome, ' + name, currentValue: null, totalInvestment: null, isNewUser: true };
       }
-      for (const el of document.querySelectorAll('p, h1, h2, h3, span')) {
-        if (el.textContent.trim().startsWith('Welcome')) return { userName: el.textContent.trim(), isNewUser: false };
+
+      // ── Fallback: any Welcome text ──
+      for (const el of document.querySelectorAll('p, h1, h2, h3')) {
+        if (el.textContent.trim().startsWith('Welcome')) {
+          return { userName: el.textContent.trim(), currentValue: null, totalInvestment: null, isNewUser: false };
+        }
       }
-      return { userName: null, isNewUser: false };
+      return { userName: null, currentValue: null, totalInvestment: null, isNewUser: false };
     });
 
     const { userName, isNewUser } = dashboardData;
+    const portfolioData = { currentValue: dashboardData.currentValue, totalInvestment: dashboardData.totalInvestment };
 
     if (isNewUser) {
       console.log(`New user with no investments. URL: ${finalUrl}, User: ${userName}`);
       await page.close();
-      return { success: true, userName, portfolioData: { currentValue: null, totalInvestment: null }, isNewUser: true };
+      return { success: true, userName, portfolioData, isNewUser: true };
     }
 
     console.log(`Login successful. URL: ${finalUrl}, User: ${userName || 'not found'}`);
-
-    const portfolioData = await page.evaluate(() => {
-      let currentValue = null, totalInvestment = null;
-      const allP = Array.from(document.querySelectorAll('p'));
-      for (const p of allP) {
-        const prev = p.previousElementSibling;
-        if (!prev) continue;
-        const text = p.textContent.replace(/₹|,|\s/g, '');
-        if (prev.textContent.includes('Current Value')) currentValue = parseFloat(text);
-        if (prev.textContent.includes('Total Investment')) totalInvestment = parseFloat(text);
-      }
-      return { currentValue, totalInvestment };
-    });
     console.log('Portfolio data:', portfolioData);
     await page.close();
     return { success: true, userName: userName || finalUrl, portfolioData };
@@ -1279,39 +1280,7 @@ async function main(discordClient, userPAN, userPasscode, kfintechAUM, kfintechC
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled', '--window-size=1920,1080']
     });
 
-    // Check NAV
-    const page = await browser.newPage();
-    
-    // Set realistic viewport
-    await page.setViewport({ width: 1920, height: 1080 });
-    
-    // Set realistic user agent
-    await page.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
-    
-    // Make Puppeteer undetectable
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.navigator.chrome = { runtime: {} };
-      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-    });
-    
-    const navResult = await checkNAVWithPage(page);
-    
-    // Check All Funds Loading
-    const allFundsResult = await checkAllFundsLoading(page);
-    
-    // Verify funds on beta website
-    let betaVerificationResult = null;
-    if (allFundsResult.success && allFundsResult.fundsData) {
-      betaVerificationResult = await verifyFundsOnBeta(browser, allFundsResult.fundsData);
-    }
-    
-    await page.close();
-    
-    // Check Login (can be skipped via SKIP_LOGIN_CHECK flag)
+    // ── STEP 1: Login first (needs OTP from user) ──────────────────────────
     let loginResult;
     if (SKIP_LOGIN_CHECK) {
       console.log('Skipping login check (SKIP_LOGIN_CHECK = true)...');
@@ -1319,6 +1288,33 @@ async function main(discordClient, userPAN, userPasscode, kfintechAUM, kfintechC
     } else {
       loginResult = await checkLogin(browser, discordClient, PAN_NUMBER, PASSCODE);
     }
+
+    // ── STEP 2: NAV + All Funds + Beta verification (no user input needed) ───
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      window.navigator.chrome = { runtime: {} };
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    });
+
+    const navResult = await checkNAVWithPage(page);
+
+    // Check All Funds Loading
+    const allFundsResult = await checkAllFundsLoading(page);
+
+    // Verify funds on beta website
+    let betaVerificationResult = null;
+    if (allFundsResult.success && allFundsResult.fundsData) {
+      betaVerificationResult = await verifyFundsOnBeta(browser, allFundsResult.fundsData);
+    }
+
+    await page.close();
+
     
     // KFintech Sync Check
     let kfintechSyncResult = null;
