@@ -4,9 +4,8 @@
   "description": "Automated NAV checker for Motilal Oswal Mutual Fund",
   "main": "src/index.js",
   "scripts": {
-    "start": "node --use-openssl-ca src/index.js",
-    "start:dev": "NODE_TLS_REJECT_UNAUTHORIZED=0 node src/index.js",
-    "start:proxy": "NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_EXTRA_CA_CERTS='' node src/index.js"
+    "start": "node src/index.js",
+    "start:dev": "NODE_TLS_REJECT_UNAUTHORIZED=0 node src/index.js"
   },
   "keywords": [
     "nav",
