@@ -386,15 +386,12 @@ async function checkNAVUpdate() {
   
   try {
     console.log('Launching browser...');
-    browser = await puppeteer.launch({
+    const launchOptions = {
       headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu'
-      ]
-    });
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    };
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    browser = await puppeteer.launch(launchOptions);
     
     const page = await browser.newPage();
     const result = await checkNAVWithPage(page);
@@ -1279,17 +1276,12 @@ async function main(discordClient, userPAN, userPasscode, kfintechAUM, kfintechC
   let browser;
   try {
     console.log('Launching browser...');
-    browser = await puppeteer.launch({
+    const launchOptions = {
       headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-blink-features=AutomationControlled',
-        '--window-size=1920,1080'
-      ]
-    });
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled', '--window-size=1920,1080']
+    };
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    browser = await puppeteer.launch(launchOptions);
 
     // Check NAV
     const page = await browser.newPage();
